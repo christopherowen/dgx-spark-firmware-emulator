@@ -15,5 +15,7 @@ __pycache__/
 *.fd
 *.rom
 *.elf
+*.efi
+*.dtb
 *.pem
 *.key

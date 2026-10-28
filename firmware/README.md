@@ -2,6 +2,24 @@
 
 Place locally obtained firmware here. Everything except this README is ignored.
 The repository intentionally ships no NVIDIA or MediaTek firmware images.
+Firmware must not be redistributed through this project, including in GitHub
+releases, issue attachments, or CI artifacts.
+
+`tools/download_firmware.py` stores upstream downloads and their source/checksum
+records in `firmware/downloads/`. Provide the direct upstream HTTPS URL and
+expected SHA-256; the script verifies both local paths are ignored and untracked
+before downloading, and only retains checksum-verified bytes. The destination
+is fixed relative to this checkout even when the script is run elsewhere.
+
+```sh
+python3 tools/download_firmware.py "$FIRMWARE_URL" \
+  --sha256 "$FIRMWARE_SHA256" --filename spark-soc.cab
+```
+
+`python3 tools/check_publication.py` checks the Git index for local artifacts
+and common firmware containers, including files force-added past `.gitignore`.
+CI runs this check. It cannot recognize every possible renamed/compressed blob;
+keep every vendor image and extracted payload under this ignored directory.
 
 For each component, keep a local note of:
 

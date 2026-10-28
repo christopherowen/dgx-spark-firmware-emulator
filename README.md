@@ -26,6 +26,29 @@ and [primary sources](research/sources.json). Findings were checked on
 2026-10-28. This is an independent project, unaffiliated with NVIDIA, MediaTek,
 Antmicro, or QEMU.
 
+## Download firmware locally
+
+Firmware may not be redistributed through this project. Download it directly
+from its vendor/LVFS source into **`firmware/downloads/`**, which is Git-ignored.
+The downloader always resolves that directory relative to this checkout,
+regardless of your current working directory.
+
+Supply the direct HTTPS download URL and its SHA-256 from upstream metadata:
+
+```sh
+python3 tools/download_firmware.py "$FIRMWARE_URL" \
+  --sha256 "$FIRMWARE_SHA256" --filename spark-soc.cab
+```
+
+The download is streamed to a temporary file, verified, then published locally.
+Its source URL, checksum, and size are saved alongside it in the same ignored
+directory. Mismatched downloads are discarded; existing files are preserved.
+The downloader refuses destinations that are tracked, unignored, or reached
+through symbolic links. It does not extract or install the image.
+
+Do not attach firmware to commits, GitHub releases, issues, or CI artifacts.
+Only downloader code and references to upstream sources belong in this repo.
+
 ## Inspect a local firmware artifact
 
 Requires Python 3.10 or newer; no Python packages are needed.
@@ -77,10 +100,12 @@ the pass condition is shell entry, not a clean platform initialization report.
 
 ```sh
 python3 -m unittest discover -s tests -v
+python3 tools/check_publication.py
 ```
 
-CI runs the synthetic parser tests and the generic QEMU/EDK II smoke test.
-All parser fixtures are generated in memory; no vendor firmware is included.
+CI rejects tracked firmware/local artifacts, runs synthetic inspection/download
+tests, and runs the generic QEMU/EDK II smoke test. Vendor firmware is never
+downloaded by CI or uploaded as an artifact. All test inputs are synthetic.
 The Apache-2.0 license covers this project's own code and documentation. Firmware
 and external projects retain their respective licenses.
 
