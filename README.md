@@ -6,8 +6,8 @@ boot to interactive AMI setup and execute an EFI application over native IPv4
 PXE. Keyboard navigation, all 13 architectural protocols and persistent NVRAM
 are verified. See [measured boot status](docs/boot-status.md) for the evidence.
 
-This is an independent project, unaffiliated with NVIDIA, MediaTek, AMI,
-Antmicro or QEMU. Firmware is downloaded from its official source into ignored
+This is an independent project, unaffiliated with NVIDIA, MediaTek, AMI
+or QEMU. Firmware is downloaded from its official source into ignored
 local storage and is never redistributed through this repository.
 
 ## Requirements
@@ -79,9 +79,9 @@ services, secure stage-2 isolation, warm reset and migration are outside the
 verified result. IPv6/HTTP boot, Secure Boot image acceptance and OS boot remain
 untested. Some board/SMBIOS fields are placeholders.
 
-QEMU is the current backend for the SoC/UEFI path. Renode remains a candidate
-for isolated controllers once their ISA and load contract are known. Neither
-backend provides a Spark model simply by selecting an Arm CPU.
+QEMU is the backend for the SoC/UEFI path. Extending it to isolated controllers
+requires identifying their ISA and load contract. A complete Spark model also
+needs the platform interfaces exercised by its firmware.
 
 - [Boot status and limitations](docs/boot-status.md)
 - [QEMU profile and compatibility NIC](qemu/README.md)

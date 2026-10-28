@@ -36,26 +36,20 @@ the physical base, IRQ assignments, reset state, firmware ISA, and executable
 entry point remain unverified for our target. A host-side driver describes
 one side of a protocol, not the remote processor's implementation.
 
-## QEMU versus Renode
+## QEMU backend
 
-| Need | QEMU | Renode |
-| --- | --- | --- |
-| AArch64 application processor and UEFI work | Preferred starting backend; existing Arm system and reference-board models | Arm64 cores exist; exact firmware CPU/system requirements still need validation |
-| Custom registers and controller behavior | C device models and board integration | C# peripheral models, platform descriptions, tracing and test APIs |
-| Isolated MT8901-related controller firmware | Evaluate once its ISA and load contract are known | Strong candidate if the actual core and required features are supported |
-| Unmodified DGX Spark firmware in this project | UEFI and real MM reach AMI setup; native IPv4 PXE downloads and executes an original EFI application | Not implemented |
-| GB10 GPU execution / CUDA | No implementation here | No implementation here |
+| Need | Implementation and status |
+| --- | --- |
+| AArch64 application processor and UEFI work | Existing Arm system models plus the Spark firmware profile |
+| Custom registers and controller behavior | C device models and board integration |
+| Isolated MT8901-related controller firmware | Identify its ISA and load contract before extending the emulator |
+| Unmodified DGX Spark firmware | UEFI and real MM reach AMI setup; native IPv4 PXE downloads and executes an original EFI application |
+| GB10 GPU execution / CUDA | Not implemented |
 
 QEMU's [`virt` board][qemu-virt] deliberately describes generic virtual hardware.
 Its [`sbsa-ref` board][qemu-sbsa] is intended for firmware development, but also
 has its own hardware contract. Neither is a substitute for a GB10 machine.
 The installed QEMU 11.1.2 machine list had no DGX Spark / GB10 / MT8901 target.
-
-Renode's [platform catalog][renode-platforms] did not list those targets when
-checked. Its [Arm64 implementation][renode-arm64] and
-[peripheral modeling guide][renode-models] make it worth evaluating rather
-than ruling out. A platform description alone cannot supply missing device
-semantics, firmware services, or CPU architectural features.
 
 ## Implementation boundary
 
@@ -82,6 +76,3 @@ No physical register writes or firmware update operations are implemented.
 [sspm-source]: https://github.com/NVIDIA/NV-Kernels/blob/0697f87f98083d0af96676725709e760543b7a07/drivers/soc/mediatek/sspm_ci/sspm_ci.c
 [qemu-virt]: https://www.qemu.org/docs/master/system/arm/virt.html
 [qemu-sbsa]: https://www.qemu.org/docs/master/system/arm/sbsa.html
-[renode-platforms]: https://renode.readthedocs.io/en/latest/introduction/supported-boards.html
-[renode-models]: https://renode.readthedocs.io/en/latest/advanced/writing-peripherals.html
-[renode-arm64]: https://github.com/renode/renode-infrastructure/blob/57856323c908f892de757bdac84bd04e5be348c0/src/Emulator/Cores/Arm64/ARMv8A.cs

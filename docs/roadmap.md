@@ -9,7 +9,6 @@ only preparation.
 - [x] Record primary sources and separate evidence from unknowns.
 - [x] Inventory local firmware artifacts by hash and recognized outer header.
 - [x] Boot generic EDK II to the UEFI shell under QEMU TCG locally.
-- [ ] Validate an appropriate Renode core against the selected component.
 
 The local baseline used QEMU 11.1.2 with the Homebrew-provided
 `edk2-aarch64-code.fd`, reporting `edk2-stable202408-prebuilt.qemu.org`.
@@ -53,7 +52,7 @@ second boot with persistent NOR state pass. See [boot status](boot-status.md).
 - [ ] Verify the reference SSPM/power_wrap interface against the Spark's ACPI.
 - [ ] Model mailbox ownership, doorbells, responses, and interrupt delivery.
 - [ ] Separate protocol stubs from actual remote firmware execution.
-- [ ] Identify the remote core and image; choose QEMU or Renode from evidence.
+- [ ] Identify the remote core, image, ISA and load contract before extending QEMU.
 - [x] Add independent subsystem regression scenarios for GPIO, UART IRQ,
       EINT software IRQs, and Root of Trust failure replies.
 

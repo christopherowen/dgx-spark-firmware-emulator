@@ -40,17 +40,6 @@
       "supports": "Firmware-development reference board with its own platform contract"
     },
     {
-      "id": "renode-arm64",
-      "url": "https://github.com/renode/renode-infrastructure/blob/57856323c908f892de757bdac84bd04e5be348c0/src/Emulator/Cores/Arm64/ARMv8A.cs",
-      "revision": "57856323c908f892de757bdac84bd04e5be348c0",
-      "supports": "Renode has Arm64 core support; exact GB10 compatibility is unproven"
-    },
-    {
-      "id": "renode-peripherals",
-      "url": "https://renode.readthedocs.io/en/latest/advanced/writing-peripherals.html",
-      "supports": "Custom peripheral modeling and handling of unmapped accesses"
-    },
-    {
       "id": "uefi-firmware-management",
       "url": "https://uefi.org/specs/UEFI/2.10/23_Firmware_Update_and_Reporting.html",
       "supports": "Firmware management capsule wrapper structure; not vendor payload semantics"
