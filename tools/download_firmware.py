@@ -32,7 +32,7 @@ class HTTPSRedirects(HTTPRedirectHandler):
 def open_https(url):
     require_https(url)
     return build_opener(HTTPSRedirects()).open(
-        Request(url, headers={"User-Agent": "dgx-spark-emu-firmware-downloader/1"}), timeout=30
+        Request(url, headers={"User-Agent": "dgx-spark-firmware-emulator-downloader/1"}), timeout=30
     )
 
 

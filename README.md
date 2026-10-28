@@ -1,4 +1,4 @@
-# DGX Spark firmware emulation lab
+# DGX Spark Firmware Emulator
 
 Run DGX Spark SoC boot firmware in QEMU, with original models for the platform
 interfaces it needs. The unchanged SoC **2.158.15** UEFI and Standalone MM images
