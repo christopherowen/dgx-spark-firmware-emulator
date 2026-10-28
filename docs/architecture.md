@@ -42,7 +42,7 @@ one side of a protocol, not the remote processor's implementation.
 | AArch64 application processor and UEFI work | Preferred starting backend; existing Arm system and reference-board models | Arm64 cores exist; exact firmware CPU/system requirements still need validation |
 | Custom registers and controller behavior | C device models and board integration | C# peripheral models, platform descriptions, tracing and test APIs |
 | Isolated MT8901-related controller firmware | Evaluate once its ISA and load contract are known | Strong candidate if the actual core and required features are supported |
-| Unmodified DGX Spark firmware today in this project | Not supported | Not supported |
+| Unmodified DGX Spark firmware today in this project | SEC/DXE entry verified; optional profile reaches serial checkpoint 61, then faults | Not implemented |
 | GB10 GPU execution / CUDA | No implementation here | No implementation here |
 
 QEMU's [`virt` board][qemu-virt] deliberately describes generic virtual hardware.

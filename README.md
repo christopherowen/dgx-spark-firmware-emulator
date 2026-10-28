@@ -3,10 +3,11 @@
 The goal is to execute DGX Spark firmware in a reproducible emulator, including
 the MediaTek MT8901-related hardware and firmware interfaces needed along the way.
 
-**Status: initial research and tooling. No DGX Spark firmware boots here yet.**
-There is no GB10/MT8901 machine model in this repository. The working QEMU test
-boots generic EDK II firmware on QEMU's `virt` board and reaches its UEFI shell.
-It establishes a host tooling baseline, not DGX Spark compatibility.
+**Status: real Spark UEFI executes through SEC and DXE entry.** The experimental
+QEMU profile also reaches serial **`Checkpoint 61`**. Full boot is incomplete:
+the current run faults in `SaveApplLog` at the unmodeled `0x180100c0` access.
+There is no complete GB10/MT8901, secure-monitor, or GPU model. See the
+[measured boot status](docs/boot-status.md).
 
 ## Approach
 
@@ -26,7 +27,36 @@ and [primary sources](research/sources.json). Findings were checked on
 2026-10-28. This is an independent project, unaffiliated with NVIDIA, MediaTek,
 Antmicro, or QEMU.
 
-## Download firmware locally
+## Execute real Spark firmware
+
+Requires Python 3.10+, QEMU with AArch64 TCG, and `7zz` or `7z`:
+
+```sh
+python3 tools/run_spark.py
+```
+
+This downloads pinned official SoC **2.158.15** firmware directly from LVFS,
+verifies cabinet/capsule hashes, and extracts the checksum-verified 32 MiB UEFI
+image locally. Images and logs stay under ignored `firmware/`.
+
+The runner supplies a synthetic loader memory handoff, verifies exact SEC and
+relocated DXE entry breakpoints, and single-steps each first instruction. It
+does not modify the vendor image or run the preceding boot ROM. Success means
+**SEC/DXE entry**, not a full boot or UEFI shell.
+
+For further platform initialization, build the optional [QEMU profile](qemu/README.md):
+
+```sh
+python3 tools/build_qemu.py
+python3 tools/run_spark.py --qemu build/qemu-spark/qemu-system-aarch64 \
+  --experimental-address-profile --continue-seconds 5
+```
+
+The continuation reaches checkpoint `61`, then currently returns nonzero for
+the firmware exception. Per-run UART output, traces, registers, and `run.json`
+remain local under `firmware/runs/`.
+
+## Download other firmware locally
 
 Firmware may not be redistributed through this project. Download it directly
 from its vendor/LVFS source into **`firmware/downloads/`**, which is Git-ignored.
@@ -103,12 +133,13 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-CI rejects tracked firmware/local artifacts, runs synthetic inspection/download
-tests, and runs the generic QEMU/EDK II smoke test. Vendor firmware is never
-downloaded by CI or uploaded as an artifact. All test inputs are synthetic.
-The Apache-2.0 license covers this project's own code and documentation. Firmware
-and external projects retain their respective licenses.
+CI rejects tracked firmware/local artifacts, runs synthetic tests and the generic
+QEMU/EDK II smoke test, and builds the custom QEMU profile to test GPIO aliases,
+GICv3 identification, and serial output with original synthetic code. Vendor
+firmware is never downloaded by CI or uploaded as an artifact.
+The Apache-2.0 license covers this project's own tools and documentation. The QEMU
+patch is GPL-2.0-or-later; firmware and external projects retain their licenses.
 
-The first Spark-specific milestone is to identify one firmware component,
-establish its load/entry contract, and execute it to a repeatable checkpoint
-with recorded peripheral accesses. Full system boot is a later milestone.
+The first Spark-specific execution checkpoint is implemented. Next is modeling
+the remaining platform interfaces to continue beyond checkpoint `61` toward
+the firmware console.

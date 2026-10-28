@@ -18,10 +18,10 @@ not committed.
 
 ## 1. Choose and characterize one Spark firmware component
 
-- [ ] Obtain an exact vendor update/package or owned-device dump locally.
-- [ ] Record board model, component, revision, source URL, and SHA-256.
-- [ ] Identify containers, compression, signatures, and executable boundaries.
-- [ ] Establish ISA, load segments, entry point, exception level, and reset state.
+- [x] Obtain an exact vendor SoC update locally (LVFS release 152274).
+- [x] Record the Founders Edition component, revision, upstream URL, and SHA-256.
+- [x] Identify containers, compression, authentication wrapper, and UEFI executable boundaries.
+- [x] Establish the UEFI test-entry ISA/load/entry/EL2 contract; physical boot-ROM handoff remains unverified.
 - [ ] Collect a matching read-only hardware inventory: ACPI tables, resource
       addresses, IRQ assignments, firmware component GUIDs, and boot log.
 
@@ -31,15 +31,18 @@ relocation, dependencies, and a boot context.
 
 ## 2. First Spark instruction and checkpoint
 
-- [ ] Implement the minimal machine and load the selected executable.
-- [ ] Trace the first executed instructions and first unknown MMIO access.
-- [ ] Add only the memory, UART, timers, interrupt controller, and services
+- [x] Implement the minimal test configuration and load the unchanged selected executable.
+- [x] Verify SEC/DXE entry with breakpoints and single-steps, and trace unknown MMIO.
+- [x] Add only the memory, UART, timers, interrupt controller, and services
       required to reach the selected checkpoint.
-- [ ] Save a reproducible command, input hashes, emulator revision, trace,
+- [x] Save a reproducible command, input hashes, emulator revision, local trace,
       expected checkpoint, and list of approximated services.
 
 Acceptance: repeatable execution of the selected real component to a known
 checkpoint, with unsupported behavior visible rather than silently ignored.
+
+Implemented: SEC/DXE entry and serial checkpoint `61`. The later `SaveApplLog`
+access at `0x180100c0` blocks full boot. See [boot status](boot-status.md).
 
 ## 3. MT8901-related interfaces and controller execution
 

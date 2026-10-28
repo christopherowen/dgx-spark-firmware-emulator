@@ -1,0 +1,148 @@
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -29,6 +29,7 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "qemu/log.h"
+ #include "qemu/datadir.h"
+ #include "qemu/units.h"
+ #include "qemu/option.h"
+@@ -91,6 +92,7 @@
+ #include "hw/virtio/virtio-md-pci.h"
+ #include "hw/virtio/virtio-iommu.h"
+ #include "hw/char/pl011.h"
++#include "hw/char/serial-mm.h"
+ #include "hw/core/cpu.h"
+ #include "hw/cxl/cxl.h"
+ #include "hw/cxl/cxl_host.h"
+@@ -1513,6 +1515,14 @@
+     SysBusDevice *s = SYS_BUS_DEVICE(dev);
+     MachineState *ms = MACHINE(vms);
+ 
++    if (vms->spark_fw_lab && uart == VIRT_UART0) {
++        object_unref(OBJECT(dev));
++        serial_mm_init(mem, 0x16a00000, 2,
++                       qdev_get_gpio_in(vms->gic, irq), 115200, chr,
++                       DEVICE_LITTLE_ENDIAN);
++        return;
++    }
++
+     qdev_prop_set_chr(dev, "chardev", chr);
+     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+     memory_region_add_subregion(mem, base,
+@@ -2526,6 +2536,41 @@
+     }
+ }
+ 
++/* GPIO configuration/readback model. External pins and interrupts are not modeled. */
++static uint64_t spark_gpio_read(void *opaque, hwaddr addr, unsigned size)
++{
++    uint32_t *registers = opaque;
++    return registers[addr >> 4];
++}
++
++static void spark_gpio_write(void *opaque, hwaddr addr, uint64_t value,
++                                  unsigned size)
++{
++    uint32_t *registers = opaque;
++    switch (addr & 0xf) {
++    case 0:
++        registers[addr >> 4] = value;
++        break;
++    case 4:
++        registers[addr >> 4] |= value;
++        break;
++    case 8:
++        registers[addr >> 4] &= ~value;
++        break;
++    default:
++        qemu_log_mask(LOG_UNIMP, "spark GPIO: unsupported write at offset 0x%" HWADDR_PRIx "\n", addr);
++        break;
++    }
++}
++
++static const MemoryRegionOps spark_gpio_ops = {
++    .read = spark_gpio_read,
++    .write = spark_gpio_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
+ static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
+ {
+     MachineState *ms = MACHINE(vms);
+@@ -2536,6 +2581,32 @@
+ 
+     for (i = 0; i < ARRAY_SIZE(base_memmap); i++) {
+         vms->memmap[i] = base_memmap[i];
++    }
++
++    if (vms->spark_fw_lab) {
++        /* Experimental single-CPU Spark firmware profile, not a GB10 model. */
++        static const hwaddr gpio_bases[] = {
++            0x1002d000, 0x12440000, 0x12460000, 0x12830000, 0x12850000,
++            0x12870000, 0x12890000, 0x128b0000, 0x12a50000, 0x12e30000,
++            0x13630000,
++        };
++        for (unsigned i = 0; i < ARRAY_SIZE(gpio_bases); i++) {
++            memory_region_init_io(&vms->spark_gpio_mmio[i], OBJECT(vms),
++                                  &spark_gpio_ops, vms->spark_gpio[i],
++                                  "spark-gpio-config", 0x1000);
++            memory_region_add_subregion(get_system_memory(), gpio_bases[i],
++                                       &vms->spark_gpio_mmio[i]);
++        }
++        vms->memmap[VIRT_FLASH].size = 0x04000000;
++        vms->memmap[VIRT_GIC_DIST].base = 0x06800000;
++        vms->memmap[VIRT_GIC_REDIST].base = 0x06880000;
++        vms->memmap[VIRT_GIC_REDIST].size = 0x00020000;
++        vms->memmap[VIRT_PCIE_MMIO].base = 0x20000000;
++        vms->memmap[VIRT_PCIE_MMIO].size = 0x1eff0000;
++        if (ms->smp.cpus != 1 || vms->gic_version != VIRT_GIC_VERSION_3) {
++            error_report("spark-fw-lab requires one CPU and GICv3");
++            exit(1);
++        }
+     }
+ 
+     if (ms->ram_slots > ACPI_MAX_RAM_SLOTS) {
+@@ -3262,6 +3333,16 @@
+ 
+     vms->machine_done.notify = virt_machine_done;
+     qemu_add_machine_init_done_notifier(&vms->machine_done);
++}
++
++static bool virt_get_spark_fw_lab(Object *obj, Error **errp)
++{
++    return VIRT_MACHINE(obj)->spark_fw_lab;
++}
++
++static void virt_set_spark_fw_lab(Object *obj, bool value, Error **errp)
++{
++    VIRT_MACHINE(obj)->spark_fw_lab = value;
+ }
+ 
+ static bool virt_get_secure(Object *obj, Error **errp)
+@@ -4213,6 +4294,10 @@
+         NULL, NULL);
+     object_class_property_set_description(oc, "acpi",
+         "Enable ACPI");
++    object_class_property_add_bool(oc, "spark-fw-lab", virt_get_spark_fw_lab,
++                                   virt_set_spark_fw_lab);
++    object_class_property_set_description(oc, "spark-fw-lab",
++        "Experimental DGX Spark UEFI interrupt/serial address profile");
+     object_class_property_add_bool(oc, "secure", virt_get_secure,
+                                    virt_set_secure);
+     object_class_property_set_description(oc, "secure",
+--- a/include/hw/arm/virt.h
++++ b/include/hw/arm/virt.h
+@@ -166,6 +166,9 @@
+     FWCfgState *fw_cfg;
+     PFlashCFI01 *flash[2];
+     bool secure;
++    bool spark_fw_lab;
++    MemoryRegion spark_gpio_mmio[11];
++    uint32_t spark_gpio[11][256];
+     bool highmem;
+     bool highmem_compact;
+     bool highmem_cxl;

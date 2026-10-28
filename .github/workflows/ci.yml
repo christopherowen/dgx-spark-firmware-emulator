@@ -22,3 +22,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64
       - name: Reach generic UEFI shell
         run: python3 tools/spark_fw.py qemu-smoke --firmware /usr/share/qemu-efi-aarch64/QEMU_EFI.fd --timeout 45
+
+  qemu-profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install QEMU build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential python3-venv git pkg-config libglib2.0-dev libpixman-1-dev
+      - name: Build experimental QEMU address profile
+        run: python3 tools/build_qemu.py --jobs 2
+      - name: Exercise interrupt controller and serial with original synthetic code
+        env:
+          SPARK_QEMU: build/qemu-spark/qemu-system-aarch64
+        run: python3 -m unittest discover -s tests -p test_qemu_profile.py -v

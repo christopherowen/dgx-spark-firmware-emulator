@@ -1,0 +1,2 @@
+# Unified patches encode empty context lines with a single space.
+qemu/patches/*.patch whitespace=-blank-at-eol
