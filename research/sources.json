@@ -1,0 +1,59 @@
+{
+  "checked_on": "2026-10-28",
+  "sources": [
+    {
+      "id": "nvidia-software-stack",
+      "url": "https://docs.nvidia.com/dgx/dgx-spark-porting-guide/latest/porting/software-requirements.html",
+      "supports": "UEFI, firmware update transport, and platform software context"
+    },
+    {
+      "id": "nvidia-firmware-components",
+      "url": "https://docs.nvidia.com/dgx/dgx-spark/release-notes.html",
+      "supports": "Separately versioned SoC, UEFI, EC, PD, and TPM components; live versions may change"
+    },
+    {
+      "id": "mt8901-pinctrl",
+      "url": "https://github.com/NVIDIA/NV-Kernels/pull/564",
+      "revision": "7c2e0248c71b59e72355ef09c6834bdb0a828f22",
+      "supports": "MT8901 ACPI GPIO/wake behavior; target board applicability needs verification"
+    },
+    {
+      "id": "sspm-interface",
+      "url": "https://github.com/NVIDIA/NV-Kernels/blob/0697f87f98083d0af96676725709e760543b7a07/drivers/soc/mediatek/sspm_ci/sspm_ci.c",
+      "revision": "0697f87f98083d0af96676725709e760543b7a07",
+      "supports": "Host-side SSPM mailbox layout, ACPI IDs, and vendor SCMI transport"
+    },
+    {
+      "id": "mt8901-audio",
+      "url": "https://github.com/NVIDIA/NV-Kernels/pull/566",
+      "revision": "d3ebf136fc2f19b410e5900fe6b6c36e068fc321",
+      "supports": "N1x MT8901 audio/DSP power-management implementation reference"
+    },
+    {
+      "id": "qemu-virt",
+      "url": "https://www.qemu.org/docs/master/system/arm/virt.html",
+      "supports": "Generic virtual board semantics and supported Arm CPUs; not Spark hardware"
+    },
+    {
+      "id": "qemu-sbsa",
+      "url": "https://www.qemu.org/docs/master/system/arm/sbsa.html",
+      "supports": "Firmware-development reference board with its own platform contract"
+    },
+    {
+      "id": "renode-arm64",
+      "url": "https://github.com/renode/renode-infrastructure/blob/57856323c908f892de757bdac84bd04e5be348c0/src/Emulator/Cores/Arm64/ARMv8A.cs",
+      "revision": "57856323c908f892de757bdac84bd04e5be348c0",
+      "supports": "Renode has Arm64 core support; exact GB10 compatibility is unproven"
+    },
+    {
+      "id": "renode-peripherals",
+      "url": "https://renode.readthedocs.io/en/latest/advanced/writing-peripherals.html",
+      "supports": "Custom peripheral modeling and handling of unmapped accesses"
+    },
+    {
+      "id": "uefi-firmware-management",
+      "url": "https://uefi.org/specs/UEFI/2.10/23_Firmware_Update_and_Reporting.html",
+      "supports": "Firmware management capsule wrapper structure; not vendor payload semantics"
+    }
+  ]
+}

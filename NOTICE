@@ -1,0 +1,6 @@
+DGX Spark Firmware Emulator
+Copyright (c) 2026 Christopher Owen
+
+Original project code, tests and documentation are licensed under Apache-2.0.
+The QEMU patch is licensed under GPL-2.0-or-later and retains its upstream notices.
+Vendor firmware is not included and retains its own licensing terms.

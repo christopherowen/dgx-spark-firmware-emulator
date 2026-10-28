@@ -1,0 +1,19 @@
+# Local firmware, captures, and emulator output stay outside version control.
+/firmware/**
+!/firmware/README.md
+/captures/
+/build/
+/.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.*
+*.cap
+*.cab
+*.bin
+*.fd
+*.rom
+*.elf
+*.pem
+*.key

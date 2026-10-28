@@ -1,0 +1,22 @@
+name: Firmware lab checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Synthetic firmware inspection tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Install generic emulator baseline
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64
+      - name: Reach generic UEFI shell
+        run: python3 tools/spark_fw.py qemu-smoke --firmware /usr/share/qemu-efi-aarch64/QEMU_EFI.fd --timeout 45
