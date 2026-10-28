@@ -29,10 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install QEMU build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential python3-venv git pkg-config libglib2.0-dev libpixman-1-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential python3-venv git pkg-config libglib2.0-dev libpixman-1-dev clang lld llvm
       - name: Build experimental QEMU address profile
         run: python3 tools/build_qemu.py --jobs 2
-      - name: Exercise interrupt controller and serial with original synthetic code
+      - name: Exercise peripherals, monitor world switches, and flash with synthetic inputs
         env:
           SPARK_QEMU: build/qemu-spark/qemu-system-aarch64
-        run: python3 -m unittest discover -s tests -p test_qemu_profile.py -v
+        run: python3 -m unittest discover -s tests -v

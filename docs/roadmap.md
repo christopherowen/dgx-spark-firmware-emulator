@@ -44,9 +44,9 @@ relocation, dependencies, and a boot context.
 Acceptance: repeatable execution of the selected real component to a known
 checkpoint, with unsupported behavior visible rather than silently ignored.
 
-Implemented: SEC/DXE entry and serial checkpoint `61`. The opt-in Root of Trust
-error-reply scenario continues to `D3`/`90`, then faults with six required
-architectural protocols absent. See [boot status](boot-status.md).
+Implemented: real SEC/DXE, real Standalone MM variable services, all required
+architectural protocols and interactive AMI setup. Keyboard navigation and a
+second boot with persistent NOR state pass. See [boot status](boot-status.md).
 
 ## 3. MT8901-related interfaces and controller execution
 
@@ -62,9 +62,13 @@ any claim of controller firmware execution includes a real instruction trace.
 
 ## 4. Expand toward system firmware boot
 
-- [ ] Add boot-chain handoffs and required secure firmware services.
-- [ ] Reach a Spark firmware console or UEFI milestone using real components.
-- [ ] Document every remaining model gap, including GPU and NIC dependencies.
+- [x] Add the synthetic loader/monitor handoff and required MM, flash and RTC services.
+- [x] Boot real Spark UEFI and MM to an interactive setup console.
+- [x] Document model gaps, including absent GPU/NIC devices, warm reset and secure isolation.
+
+Further work: boot an OS using modeled storage, implement warm reset and fuller
+PCIe/USB behavior, and replace remaining loader/board approximations with
+verified interfaces.
 
 Full GB10 CPU microarchitecture fidelity, GPU computation, thermal/electrical
 simulation, and hardware flashing are separate workstreams. They are not

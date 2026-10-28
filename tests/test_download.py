@@ -90,11 +90,14 @@ class DownloadTests(unittest.TestCase):
         target.parent.mkdir(parents=True)
         target.write_bytes(self.data)
         (self.root / "renamed-image.dat").write_bytes(b"MSCF" + self.data)
+        (self.root / "renamed-mm.dat").write_bytes(b"SPKG" + self.data)
         subprocess.run(["git", "-C", str(self.root), "add", "-f", str(target)], check=True)
         subprocess.run(["git", "-C", str(self.root), "add", "renamed-image.dat"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "add", "renamed-mm.dat"], check=True)
         # Even deleting the local copy cannot hide a firmware blob already staged.
         (self.root / "renamed-image.dat").unlink()
-        self.assertEqual(violations(self.root), ["firmware/downloads/spark-soc.cab", "renamed-image.dat"])
+        self.assertEqual(violations(self.root), ["firmware/downloads/spark-soc.cab", "renamed-image.dat",
+                                                "renamed-mm.dat"])
         with patch("tools.download_firmware.open_https") as opener:
             with self.assertRaisesRegex(ValueError, "tracked"):
                 self.fetch()

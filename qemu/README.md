@@ -20,7 +20,7 @@ pin signals and debounce timing are not modeled. See the reviewed
 [hardware findings](../docs/hardware-findings.md) and public register references.
 
 Only one CPU and GICv3 are supported by this profile; physical ACPI reports
-GICv4. Generic PCI topology is approximate, and no GPU is implemented. Use TCG
+GICv4. PCIe roots have no downstream devices, and no GPU is implemented. Use TCG
 and a fresh QEMU process per run; reset, migration, and snapshot restoration
 of the added peripheral state are not supported.
 
@@ -35,25 +35,49 @@ libpixman-1-dev`. Then run from the repository root:
 
 ```sh
 python3 tools/build_qemu.py
-python3 tools/run_spark.py --qemu build/qemu-spark/qemu-system-aarch64 \
-  --experimental-address-profile --continue-seconds 5
+python3 tools/boot_spark.py --smoke-test
+python3 tools/boot_spark.py
 ```
 
 QEMU source, dependencies, and binaries stay under ignored `build/`. Vendor
 firmware, generated handoff data, and execution traces stay under ignored
 `firmware/`. No vendor payload is included in this patch.
 
-The current continuation reaches serial checkpoint `61`, then faults at an
-unmodeled `0x180100c0` access and returns nonzero.
+The full boot runner also requires Clang, LLD and LLVM objcopy (`clang lld llvm`
+on Ubuntu; `llvm` and `lld` with Homebrew). It sets `secure=on`, loads this
+project's original monitor and the unchanged vendor Standalone MM package,
+and boots real Spark UEFI to interactive AMI setup. See [boot status](../docs/boot-status.md)
+for measured results and [monitor details](../monitor/README.md).
 
-The separate `spark-rot-error-replies=on` property, exposed by the runner's
-`--rot-error-replies` option, models a polled FIFO transport at `0x18010000`
+Additional bring-up interfaces are:
+
+- A shared 256 KiB loader-cache SRAM window at `0x00100000`, initially zero.
+- Bounded USB PHY/control configuration banks, with register readback. Six
+  existing QEMU xHCI cores occupy the firmware's host apertures. Corresponding
+  IPPC status reflects reset/power state and exposes one USB2/USB3 port per
+  virtual controller. PHY timing and electrical effects are not modeled;
+  xHCI interrupt lines are not routed, and UEFI uses polling.
+- PCIe PHY/system configuration readback and 15 minimal type-1 root-port
+  configuration spaces at the observed ECAM bases. Downstream accesses read
+  all ones, BARs are absent and links remain down. This is an empty topology,
+  not a model of the physical GPU, NVMe or network cards.
+- Synthetic board and fuse configuration, including a one-CPU enable mask.
+  Most fields and loader-cached board information remain zero placeholders.
+
+The enlarged GIC also adjusts the CPU timer/PPI input base to match its SPI
+count. The lab monitor wakes the redistributor before entering UEFI. A
+synthetic test verifies timer PPI 30 as well as monitor context switches.
+
+`spark-rot-error-replies=on` models a polled FIFO transport at `0x18010000`
 and `0x18020000`. Every request receives a nonzero service status. It implements
 no security or logging service and executes no Root of Trust firmware. The
 transport is inferred from the UEFI caller, not verified by live register
-transactions. This failure scenario reaches checkpoints `D3` and `90`, then
-reports missing architectural protocols and faults. See
-[boot status](../docs/boot-status.md).
+transactions. The full boot runner explicitly enables this failure behavior.
+The older diagnostic runner can still select it with `--rot-error-replies`.
+
+The added configuration-bank state is for cold boot only; warm reset,
+migration and restoring QEMU snapshots are unsupported. Persistent emulated
+NOR is saved separately by the full boot runner.
 
 The patch modifies QEMU GPL-2.0-or-later source and is supplied under that
 license, with the original file copyright notices retained. The project's

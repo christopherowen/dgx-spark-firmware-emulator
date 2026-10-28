@@ -3,12 +3,11 @@
 The goal is to execute DGX Spark firmware in a reproducible emulator, including
 the MediaTek MT8901-related hardware and firmware interfaces needed along the way.
 
-**Status: real Spark UEFI executes through SEC and DXE entry.** The experimental
-QEMU profile also reaches serial **`Checkpoint 61`**. An optional Root of Trust
-error-reply scenario reaches **`D3` and `90`**, then stops with missing UEFI
-architectural protocols and an exception. Full boot is incomplete.
-There is no complete GB10/MT8901, secure-monitor, or GPU model. See the
-[measured boot status](docs/boot-status.md).
+**Status: real Spark UEFI boots to interactive AMI setup in QEMU.** The unchanged
+SoC **2.158.15** UEFI and Standalone MM images run together with this project's
+original lab monitor. Main → Advanced keyboard navigation, all 13 required
+UEFI architectural protocols, and a second boot using saved NVRAM are verified.
+See the [measured boot status](docs/boot-status.md) for scope and limitations.
 
 ## Approach
 
@@ -28,46 +27,53 @@ and [primary sources](research/sources.json). Findings were checked on
 2026-10-28. This is an independent project, unaffiliated with NVIDIA, MediaTek,
 Antmicro, or QEMU.
 
-## Execute real Spark firmware
+## Boot Spark UEFI
 
-Requires Python 3.10+, QEMU with AArch64 TCG, and `7zz` or `7z`:
+Requires Python 3.10+, 7-Zip (`7zz` or `7z`), Clang, LLD, LLVM objcopy,
+and the [QEMU build dependencies](qemu/README.md). On macOS, Homebrew's `llvm`
+and `lld` provide the monitor toolchain. On Ubuntu, install `clang lld llvm`.
+
+```sh
+python3 tools/build_qemu.py
+python3 tools/boot_spark.py
+```
+
+The runner downloads pinned official SoC **2.158.15** firmware directly from
+LVFS, checks cabinet/capsule/UEFI/MM hashes, and extracts both unchanged images
+locally. It builds the original monitor, boots one AArch64 CPU under TCG, and
+opens AMI setup over the serial terminal. Arrow keys navigate; **Ctrl-C** ends
+the session and saves the emulated variable store. Exit setup's menus without
+requesting a firmware reboot; use a new emulator process for a cold boot.
+
+For an automated check that opens setup, navigates to Advanced, verifies all
+architectural protocols, saves NVRAM, and stops:
+
+```sh
+python3 tools/boot_spark.py --smoke-test
+```
+
+Run it twice to exercise persistence. NVRAM is in `firmware/state/spark-nor.bin`;
+per-run UART logs, a DXE snapshot, input hashes and `run.json` are in
+`firmware/runs/`. All firmware, state, captures and generated binaries are
+Git-ignored. Select a separate fresh store with
+`--state-file firmware/state/another-nor.bin`.
+
+This boots the UEFI payload and its real MM variable firmware using an emulated
+loader/monitor environment. Earlier silicon boot stages, GPU/NIC devices,
+production security services and an OS are outside the verified result. RoT
+requests receive explicit errors. Some cached board/SMBIOS fields are placeholders,
+including setup's total-memory display. See the [monitor](monitor/README.md)
+and [profile](qemu/README.md) for modeled interfaces.
+
+The earlier diagnostic command remains available:
 
 ```sh
 python3 tools/run_spark.py
 ```
 
-This downloads pinned official SoC **2.158.15** firmware directly from LVFS,
-verifies cabinet/capsule hashes, and extracts the checksum-verified 32 MiB UEFI
-image locally. Images and logs stay under ignored `firmware/`.
-
-The runner supplies a synthetic loader memory handoff, verifies exact SEC and
-relocated DXE entry breakpoints, and single-steps each first instruction. It
-does not modify the vendor image or run the preceding boot ROM. Success means
-**SEC/DXE entry**, not a full boot or UEFI shell.
-
-For further platform initialization, build the optional [QEMU profile](qemu/README.md):
-
-```sh
-python3 tools/build_qemu.py
-python3 tools/run_spark.py --qemu build/qemu-spark/qemu-system-aarch64 \
-  --experimental-address-profile --continue-seconds 5
-```
-
-The continuation reaches checkpoint `61`, then currently returns nonzero for
-the firmware exception. Per-run UART output, traces, registers, and `run.json`
-remain local under `firmware/runs/`.
-
-To explore the later failure path with explicit errors for unavailable Root
-of Trust services:
-
-```sh
-python3 tools/run_spark.py --qemu build/qemu-spark/qemu-system-aarch64 \
-  --experimental-address-profile --rot-error-replies --continue-seconds 5
-```
-
-This scenario still returns nonzero: no Root of Trust service succeeds and no
-secure partition executes. The runner records missing architectural protocols
-and requested secure-monitor function IDs to help identify the next dependency.
+It checks exact SEC/DXE entry and first-instruction single-steps on stock QEMU.
+Its separate continuation experiments omit MM and are expected to fail; use
+`boot_spark.py` for the complete setup path.
 
 ## Collect read-only hardware evidence
 

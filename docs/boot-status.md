@@ -1,109 +1,95 @@
 # Measured Spark boot status
 
-Verified locally on 2026-10-28 with QEMU 11.1.2 TCG, one AArch64 `max` CPU,
-and a synthetic loader handoff. **Full Spark boot is incomplete.**
+Verified locally on 2026-10-28 with QEMU 11.1.2 TCG and one AArch64 CPU:
+**the real Spark UEFI boots through BDS to interactive AMI setup.** Keyboard
+navigation from Main to Advanced works. A second cold boot reuses the saved
+variable store and passes the same checks.
 
-## Firmware inputs
+## Inputs and execution
 
-The source is official LVFS component `com.nvidia.dgx.spark.socfw.firmware`,
-release **152274**, version `0x02009e0f` / **2.158.15**. The direct upstream URL
-and cabinet, capsule, and decoded UEFI SHA-256 values are pinned in
-`tools/spark_image.py`. Only references and hashes are published.
+Official LVFS release **152274**, SoC **2.158.15**, supplies both unchanged
+vendor images. `tools/spark_image.py` pins and verifies the cabinet, capsule
+and 32 MiB UEFI hashes. `tools/prepare_mm.py` extracts the SPKG v2 Standalone MM
+package and verifies SHA-256
+`591d5b33bad81bed6ec402dd2a5d20ed37bd3920d261420e0c4e3ba09d9431fa`.
+No vendor images, captures or disassembly are published.
 
-The container chain is CAB → FMP v3 capsule → authentication wrapper → MSS1
-header → MediaTek `SF_BOOT` image → FILEINFO LZMA stream → 32 MiB UEFI volume.
-Extraction checks bounds and exact hashes. It does not independently validate
-the PKCS#7 trust chain or emulate secure boot.
+The original lab monitor starts at `0x80020000` in EL3. It boots the real MM
+package at `0x93a40000` in S-EL1, receives its initialization-complete wait, and
+starts UEFI at `0x80800000` in NS-EL2. It routes actual MM communications rather
+than installing a substitute variable protocol. The real MM driver formats
+and operates on the emulated NOR variable partition. A modeled PMIC RTC
+service supports the real UEFI clock driver.
 
-The reset branch and first PE image agree on firmware base `0x80800000` and
-SEC entry `0x80802f94`. The synthetic handoff supplies MMIO, `MMAP_TINY_UEFI`,
-and `MMAP_FREE_BASE_1` entries in memory tag `0x88610005` at `0x80010000`.
-Its full `0x1868`-byte size is required because SEC copies that complete
-structure into a GUID HOB. This is an inferred test-entry contract, not a
-physical-device capture or a reproduction of the preceding silicon boot ROM.
+The synthetic loader memory tag at `0x80010000` has size `0x1868`, plus its
+terminator, because SEC copies the complete tag into a GUID HOB. It reserves
+live monitor, MM, communication/page-table and NOR backing ranges. This is an
+inferred laboratory entry contract. No preceding boot ROM, vendor BL31 or
+production partition manager is executed. Hash checks do not validate the
+capsule PKCS#7 trust chain or establish authenticated boot.
 
 ## Verified results
 
-| Checkpoint | Result |
+| Check | Result |
 | --- | --- |
-| SEC entry `0x80802f94` | Exact execution breakpoint and first-instruction single-step verified |
-| MMU setup and HOB construction | Executed with synthetic loader input |
-| Relocated DXE core entry `0x847c96fc` | Exact execution breakpoint and first-instruction single-step verified |
-| GPIO aliases, GICv3 ID, and 16550 serial | Tested with original synthetic AArch64 probe |
-| UART GSI 878 and EINT aggregate GSI 563 | Synthetic guest interrupt tests pass |
-| Vendor serial output with custom profile | `Checkpoint 61` |
-| Opt-in Root of Trust error replies | `Checkpoint 61`, `D3`, and `90`, then exception |
-| Firmware console / setup menu / OS boot | Not achieved |
+| Unchanged SEC and DXE core | Executed; the separate stock-QEMU diagnostic also verifies exact entry breakpoints and single-steps |
+| Real Standalone MM firmware | Initializes, waits and processes real UEFI variable requests |
+| NOR-backed variable services | Read/program/erase operate on local persistent emulated flash |
+| All 13 DXE architectural protocols | Present; complete ordered GUID table and terminator validated in paused guest memory |
+| BDS and console initialization | Completes; serial checkpoints include `AD`, `A9`, `AB` |
+| AMI setup | Interactive Main screen, real clock advancing |
+| Keyboard input | Right-arrow opens Advanced and its settings list |
+| Subsequent cold boot | Existing NOR state loaded; setup, navigation and all protocols verified again |
+| GPU, NIC or operating system | Not part of this result |
 
-The DXE allocation is deterministic for this image and handoff. The runner
-fails if the exact checkpoint is not reached; it records the PC before and
-after each single-step. A translated instruction trace alone does not count
-as execution evidence. The default command stops after the two entry checks.
-
-## Current blocker
-
-Without error replies, after checkpoint `61`, `SaveApplLog` loads at
-`0x8676f000`. It faults at PC **`0x86770350`**, writing **`0x180100c0`**.
-The serial console reports a synchronous exception and the exception handler
-enters a dead loop. Physical ACPI identifies this region as `ROT0`, HID
-`NVDA8600`, a Root of Trust interface. Treating it as generic PCI configuration
-does not solve the protocol: the firmware polls indefinitely. That experiment
-is not included in the profile.
-
-With `--rot-error-replies`, a bounded polled FIFO at ROT0/ROT1 echoes the
-message ID with zero payload words and nonzero service status 1. ACK and RX
-pending/W1C behavior follows the observed UEFI caller. This is an explicit
-failure scenario: it never returns service success, accesses no host device,
-and executes no Root of Trust firmware. The status number has no claimed
-vendor-specific meaning. The interface has not been validated by physical
-register transactions.
-
-That scenario reaches `D3`, prints `ERROR: Some Architectural Protocols are
-not available`, reaches `90`, and finally reports a synchronous exception at
-`0x0`. Inspection of the paused DXE core's complete architectural-protocol
-table at `0x847dc928` confirms:
-
-| Present | Missing |
-| --- | --- |
-| Security, Cpu, Metronome, Timer, WatchdogTimer, Runtime, Reset | Bds, Variable, VariableWrite, Capsule, MonotonicCounter, RealTimeClock |
-
-The runner validates all 13 ordered public protocol GUID pointers and the
-null table terminator before reporting these flags. If the layout changes,
-it records an inspection error instead of guessing. The snapshot remains
-local under `firmware/runs/`.
-
-The trace also records SMC requests, including `0xc4000066`, the FF-A RX/TX
-mapping function defined by [EDK II's FF-A ABI header](https://github.com/tianocore/edk2/blob/master/MdePkg/Include/IndustryStandard/ArmFfaSvc.h).
-The current profile supplies QEMU's PSCI conduit, which returns unsupported
-for this function; it supplies no secure partition manager or MM service.
-The missing protocols identify further work, not proof that one stubbed call
-would complete boot.
-
-The profile uses QEMU's existing GICv3 and 16550 models at observed firmware
-addresses, plus GPIO/pad configuration banks with value/SET/CLEAR readback.
-Four EINT banks provide configuration, software pending/acknowledgement, and
-parent interrupt aggregation. External GPIO/EINT input, electrical effects,
-and debounce/clock timing are unimplemented. The generic PCI topology remains
-approximate. No GB10 GPU or secure partition execution is provided. The
-[hardware inventory](hardware-findings.md) confirms addresses and interrupt
-assignments but runs a different SoC firmware revision.
+The 13 protocols are Security, Cpu, Metronome, Timer, Bds, WatchdogTimer,
+Runtime, Variable, VariableWrite, Capsule, MonotonicCounter, Reset and
+RealTimeClock. A translated code trace or a printed checkpoint alone is not
+accepted as a full-boot result.
 
 ## Reproduce
 
 ```sh
-python3 tools/run_spark.py
 python3 tools/build_qemu.py
-python3 tools/run_spark.py --qemu build/qemu-spark/qemu-system-aarch64 \
-  --experimental-address-profile --continue-seconds 5
-python3 tools/run_spark.py --qemu build/qemu-spark/qemu-system-aarch64 \
-  --experimental-address-profile --rot-error-replies --continue-seconds 5
+python3 tools/boot_spark.py --smoke-test
+python3 tools/boot_spark.py --smoke-test
+python3 tools/boot_spark.py
 ```
 
-The first command verifies SEC/DXE entry on stock QEMU. Both continuations
-currently return nonzero for their firmware exceptions. The error-reply
-scenario additionally reaches `D3`/`90`. Per-run evidence is local under ignored
-`firmware/runs/<UTC timestamp>/`. No host disks or networking are attached.
+The smoke test sends Escape at the firmware's setup prompt, waits for the
+actual setup title, sends a right-arrow and checks the Advanced settings.
+It then stops the CPU, inspects the architectural-protocol table and saves
+NOR state atomically. A firmware exception or missed boot deadline fails the
+run. Interactive mode accepts serial keyboard input; Ctrl-C saves and exits.
 
-Next work is secure-world/MM communication, flash/NVRAM, and the remaining
-architectural protocols, followed by boot-device discovery and the console.
-Physical inventory alone cannot establish those service contracts.
+Evidence stays under ignored `firmware/runs/<UTC timestamp>/`: `serial.log`,
+`qemu.log`, the paused DXE snapshot, generated handoff, hashes and `run.json`.
+The record links each run's input/output NOR hashes, allowing persistence to
+be checked without publishing any generated variable-store contents. Failed
+runs preserve the previous NOR file. Concurrent runs cannot share one store.
+
+## Model boundaries
+
+The [QEMU profile](../qemu/README.md) provides functional GIC/timers/UART and
+QEMU xHCI cores, plus bounded configuration models for GPIO, EINT, USB PHY,
+PCIe and board information. The original [monitor](../monitor/README.md)
+implements only the observed FF-A compatibility subset and flash/clock peers.
+Root of Trust requests receive explicit nonzero errors; no attestation or
+security/logging service is reported as successful.
+
+PCIe roots have no downstream devices. USB PHY register readback and clock
+status approximate initialization, without electrical behavior. Loader-cached
+board/version data and most fuse fields use synthetic defaults. Setup's
+SMBIOS total-memory field currently shows 0 GB even though UEFI runs in QEMU
+RAM; this display is not a physical memory inventory. Physical ACPI reports
+GICv4 and 20 CPUs; the lab uses GICv3 and one CPU. The inventoried hardware ran
+SoC 2.155.11, a different revision from the emulated update.
+
+There is no full GB10/MT8901 implementation, GPU, physical-device passthrough,
+secure stage-2 isolation, production secure boot, firmware flashing, warm
+reset or migration support. Use a fresh QEMU process per cold boot. Reaching
+setup establishes UEFI boot, not execution of every component in the SoC image.
+
+The older `run_spark.py` diagnostic deliberately omits the monitor/MM package.
+It remains useful for SEC/DXE entry checks and explicit failure scenarios;
+its continuations are not the full-boot runner.

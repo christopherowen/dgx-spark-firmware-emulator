@@ -7,8 +7,9 @@ import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-FIRMWARE_SUFFIXES = {".cap", ".cab", ".bin", ".fd", ".rom", ".elf", ".efi", ".dtb"}
+FIRMWARE_SUFFIXES = {".cap", ".cab", ".bin", ".fd", ".rom", ".elf", ".efi", ".dtb", ".pkg"}
 FIRMWARE_PREFIXES = (b"\x7fELF", b"MSCF", b"MZ", b"\xd0\x0d\xfe\xed",
+                     b"SPKG", b"SF_BOOT", b"MSS1",
                      bytes.fromhex("edd5cb6d2de8444cbda17194199ad92a"))
 
 

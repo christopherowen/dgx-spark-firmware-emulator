@@ -1,14 +1,15 @@
 --- a/hw/arm/virt.c
 +++ b/hw/arm/virt.c
-@@ -29,6 +29,7 @@
+@@ -29,6 +29,8 @@
   */
  
  #include "qemu/osdep.h"
++#include "hw/usb/xhci.h"
 +#include "qemu/log.h"
  #include "qemu/datadir.h"
  #include "qemu/units.h"
  #include "qemu/option.h"
-@@ -91,6 +92,7 @@
+@@ -91,6 +93,7 @@
  #include "hw/virtio/virtio-md-pci.h"
  #include "hw/virtio/virtio-iommu.h"
  #include "hw/char/pl011.h"
@@ -16,7 +17,17 @@
  #include "hw/core/cpu.h"
  #include "hw/cxl/cxl.h"
  #include "hw/cxl/cxl_host.h"
-@@ -1419,7 +1421,9 @@
+@@ -1291,7 +1294,8 @@
+ 
+     for (int i = 0; i < smp_cpus; i++) {
+         DeviceState *cpudev = DEVICE(qemu_get_cpu(i));
+-        int intidbase = NUM_IRQS + i * GIC_INTERNAL;
++        int intidbase = (vms->spark_fw_lab ? 896 - 32 : NUM_IRQS) +
++                        i * GIC_INTERNAL;
+         /*
+          * Mapping from the output timer irq lines from the CPU to the
+          * GIC PPI inputs we use for the virt board.
+@@ -1419,7 +1423,9 @@
       * Note that the num-irq property counts both internal and external
       * interrupts; there are always 32 of the former (mandated by GIC spec).
       */
@@ -27,7 +38,7 @@
      if (!kvm_irqchip_in_kernel() && !hvf_irqchip_in_kernel()) {
          qdev_prop_set_bit(vms->gic, "has-security-extensions", vms->secure);
      }
-@@ -1461,6 +1465,9 @@
+@@ -1461,6 +1467,9 @@
          sysbus_mmio_map(gicbusdev, 2, vms->memmap[VIRT_HIGH_GIC_REDIST2].base);
      }
  
@@ -37,7 +48,7 @@
      gic_connect_ppis(vms);
  
      fdt_add_gic_node(vms);
-@@ -1512,6 +1519,14 @@
+@@ -1512,6 +1521,14 @@
      DeviceState *dev = qdev_new(TYPE_PL011);
      SysBusDevice *s = SYS_BUS_DEVICE(dev);
      MachineState *ms = MACHINE(vms);
@@ -52,7 +63,7 @@
  
      qdev_prop_set_chr(dev, "chardev", chr);
      sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-@@ -2526,6 +2541,220 @@
+@@ -2526,6 +2543,319 @@
      }
  }
  
@@ -270,10 +281,109 @@
 +    .valid.max_access_size = 4,
 +};
 +
++static uint64_t spark_usb_read(void *opaque, hwaddr addr, unsigned size)
++{
++    uint32_t *r = opaque;
++    return r[addr / 4];
++}
++
++static void spark_usb_write(void *opaque, hwaddr addr, uint64_t value,
++                            unsigned size)
++{
++    uint32_t *r = opaque;
++    r[addr / 4] = value;
++}
++
++static const MemoryRegionOps spark_usb_ops = {
++    .read = spark_usb_read, .write = spark_usb_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4, .valid.max_access_size = 4,
++    .impl.min_access_size = 4, .impl.max_access_size = 4,
++};
++
++static uint64_t spark_usb_ippc_read(void *opaque, hwaddr addr, unsigned size)
++{
++    uint32_t *r = opaque;
++    if (addr == 0x10) {
++        return ((r[0] | r[1]) & 1) ? 0 : 0x10d01;
++    }
++    if (addr == 0x24) {
++        return 0x101; /* one USB2 and one USB3 port */
++    }
++    return r[addr / 4];
++}
++
++static const MemoryRegionOps spark_usb_ippc_ops = {
++    .read = spark_usb_ippc_read, .write = spark_usb_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4, .valid.max_access_size = 4,
++    .impl.min_access_size = 4, .impl.max_access_size = 4,
++};
++
++static uint64_t spark_pcie_config_read(void *opaque, hwaddr addr, unsigned size)
++{
++    uint8_t *r = opaque;
++    uint64_t value = 0;
++    for (unsigned i = 0; i < size; i++) {
++        value |= (uint64_t)r[addr + i] << (8 * i);
++    }
++    return value;
++}
++
++static void spark_pcie_config_write(void *opaque, hwaddr addr, uint64_t value,
++                                    unsigned size)
++{
++    uint8_t *r = opaque;
++    for (unsigned i = 0; i < size; i++) {
++        r[addr + i] = value >> (8 * i);
++    }
++}
++
++static const MemoryRegionOps spark_pcie_config_ops = {
++    .read = spark_pcie_config_read, .write = spark_pcie_config_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 1, .valid.max_access_size = 4,
++    .impl.min_access_size = 1, .impl.max_access_size = 4,
++    .valid.unaligned = true, .impl.unaligned = true,
++};
++
++static uint64_t spark_ecam_read(void *opaque, hwaddr addr, unsigned size)
++{
++    VirtMachineState *vms = opaque;
++    unsigned segment = addr >> 28;
++    hwaddr offset = addr & 0xfffffff;
++    if (offset + size > 4096) {
++        return UINT64_MAX;
++    }
++    return spark_pcie_config_read(vms->spark_root_config[segment], offset, size);
++}
++
++static void spark_ecam_write(void *opaque, hwaddr addr, uint64_t value,
++                             unsigned size)
++{
++    VirtMachineState *vms = opaque;
++    unsigned segment = addr >> 28;
++    hwaddr offset = addr & 0xfffffff;
++    if (offset + size > 4096 || offset < 4 ||
++        (offset >= 8 && offset < 0x10) ||
++        (offset >= 0x10 && offset < 0x18) ||
++        (offset >= 0x30 && offset < 0x40) || offset >= 0x40) {
++        return;
++    }
++    spark_pcie_config_write(vms->spark_root_config[segment], offset, value, size);
++}
++
++static const MemoryRegionOps spark_ecam_ops = {
++    .read = spark_ecam_read, .write = spark_ecam_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 1, .valid.max_access_size = 4,
++    .impl.min_access_size = 1, .impl.max_access_size = 4,
++};
++
  static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
  {
      MachineState *ms = MACHINE(vms);
-@@ -2536,6 +2765,57 @@
+@@ -2536,6 +2866,146 @@
  
      for (i = 0; i < ARRAY_SIZE(base_memmap); i++) {
          vms->memmap[i] = base_memmap[i];
@@ -318,6 +428,95 @@
 +                                           &vms->spark_rot[i].iomem);
 +            }
 +        }
++        static const struct { hwaddr base; uint32_t size; } usb_config[] = {
++            {0x1dcc0000, 0x10000}, {0x1dcd0000, 0x10000},
++            {0x1df40000, 0x10000}, {0x1df50000, 0x10000},
++            {0x1d282000, 0x1000}, {0x1d284000, 0x1000},
++            {0x1d286000, 0x1000}, {0x1d288000, 0x1000},
++            {0x1d210000, 0x1000}, {0x1d230000, 0x1000},
++            {0x1d250000, 0x1000}, {0x1d270000, 0x1000},
++            {0x1d100000, 0x20000}, {0x1d140000, 0x20000},
++            {0x1d180000, 0x20000}, {0x1d1c0000, 0x20000},
++            {0x1dbd0000, 0x1000}, {0x1de50000, 0x1000},
++            {0x1db70000, 0x10000}, {0x1dba0000, 0x10000},
++            {0x1ddf0000, 0x10000}, {0x1de20000, 0x10000},
++            {0x1d880000, 0x10000}, {0x1d890000, 0x10000},
++        };
++        for (unsigned i = 0; i < ARRAY_SIZE(usb_config); i++) {
++            memory_region_init_io(&vms->spark_usb_config[i], OBJECT(vms),
++                                  &spark_usb_ops,
++                                  vms->spark_usb_regs[i], "spark-usb-config",
++                                  usb_config[i].size);
++            memory_region_add_subregion(get_system_memory(), usb_config[i].base,
++                                        &vms->spark_usb_config[i]);
++        }
++        for (unsigned i = 0; i < 15; i++) {
++            uint8_t *r = vms->spark_root_config[i];
++            r[0] = 0xde; r[1] = 0x10; r[2] = 0xce; r[3] = 0x22;
++            r[6] = 0x10; r[8] = 1; r[0xa] = 4; r[0xb] = 6;
++            r[0xe] = 1; r[0x34] = 0x40;
++            r[0x40] = 0x10; r[0x42] = 0x42; r[0x4c] = 0x11;
++        }
++        memory_region_init_io(&vms->spark_ecam, OBJECT(vms), &spark_ecam_ops,
++                              vms, "spark-empty-pcie-roots", 0xf0000000);
++        memory_region_add_subregion_overlap(get_system_memory(), 0xf300000000UL,
++                                            &vms->spark_ecam, 1);
++        static const hwaddr pcie_config[] = {
++            0x1d600000, 0x1d6a0000, 0x1d720000, 0x1d7a0000,
++            0x1d800000, 0x1d810000, 0x1d820000, 0x1d830000, 0x1d950000,
++            0x1d790000, 0x1d780000, 0x1d7d0000, 0x1d7c0000,
++            0x1d690000, 0x1d680000, 0x1d6d0000, 0x1d6c0000,
++            0x1d710000, 0x1d700000, 0x1d750000, 0x1d740000,
++            0x1d970000, 0x1da00000, 0x1d980000, 0x1da10000,
++            0x1d990000, 0x1da20000, 0x1d9a0000, 0x1da30000,
++            0x1d9b0000, 0x1da40000, 0x1db20000, 0x1db30000,
++            0x1dda0000, 0x1ddb0000, 0x1d640000,
++        };
++        for (unsigned i = 0; i < ARRAY_SIZE(pcie_config); i++) {
++            memory_region_init_io(&vms->spark_pcie_cfg[i], OBJECT(vms),
++                                  &spark_pcie_config_ops, vms->spark_pcie_cfgregs[i],
++                                  "spark-pcie-config", 0x10000);
++            memory_region_add_subregion(get_system_memory(), pcie_config[i],
++                                        &vms->spark_pcie_cfg[i]);
++        }
++        memory_region_init_io(&vms->spark_boardcfg, OBJECT(vms),
++                              &spark_usb_ops, vms->spark_boardregs,
++                              "spark-board-config", 0x1000);
++        memory_region_add_subregion(get_system_memory(), 0x18083000,
++                                    &vms->spark_boardcfg);
++        vms->spark_fuse_regs[0x5268 / 4] = 0xffffe;
++        memory_region_init_io(&vms->spark_fuse, OBJECT(vms),
++                              &spark_usb_ops, vms->spark_fuse_regs,
++                              "spark-topology-fuses", 0x10000);
++        memory_region_add_subregion(get_system_memory(), 0x12210000,
++                                    &vms->spark_fuse);
++        memory_region_init_io(&vms->spark_pcie_syscfg, OBJECT(vms),
++                              &spark_usb_ops, vms->spark_pcie_sysregs,
++                              "spark-pcie-syscfg", 0x1000);
++        memory_region_add_subregion(get_system_memory(), 0x16bd0000,
++                                    &vms->spark_pcie_syscfg);
++        static const hwaddr usb_hosts[] = {
++            0x1db60000, 0x1db90000, 0x1dde0000,
++            0x1de10000, 0x1d860000, 0x1d870000,
++        };
++        for (unsigned i = 0; i < ARRAY_SIZE(usb_hosts); i++) {
++            DeviceState *dev = qdev_new(TYPE_XHCI_SYSBUS);
++            qdev_prop_set_uint32(dev, "intrs", 1);
++            qdev_prop_set_uint32(dev, "p2", 1);
++            qdev_prop_set_uint32(dev, "p3", 1);
++            sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
++            sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, usb_hosts[i]);
++            memory_region_init_io(&vms->spark_usb_config[24 + i], OBJECT(vms),
++                                  &spark_usb_ippc_ops, vms->spark_usb_regs[24 + i],
++                                  "spark-usb-ippc", 0x1000);
++            memory_region_add_subregion(get_system_memory(), usb_hosts[i] + 0x8000,
++                                        &vms->spark_usb_config[24 + i]);
++            memory_region_init_io(&vms->spark_usb_config[30 + i], OBJECT(vms),
++                                  &spark_usb_ops, vms->spark_usb_regs[30 + i],
++                                  "spark-usb-vendor", 0x1000);
++            memory_region_add_subregion(get_system_memory(), usb_hosts[i] + 0x4000,
++                                        &vms->spark_usb_config[30 + i]);
++        }
 +        vms->memmap[VIRT_FLASH].size = 0x04000000;
 +        vms->memmap[VIRT_GIC_DIST].base = 0x06800000;
 +        vms->memmap[VIRT_GIC_REDIST].base = 0x06880000;
@@ -331,7 +530,29 @@
      }
  
      if (ms->ram_slots > ACPI_MAX_RAM_SLOTS) {
-@@ -3262,6 +3542,26 @@
+@@ -2942,6 +3412,21 @@
+ 
+     firmware_loaded = virt_firmware_init(vms, sysmem,
+                                          secure_sysmem ?: sysmem);
++
++    if (vms->spark_fw_lab) {
++        /* Early boot SRAM, including the loader's cached NOR identification. */
++        memory_region_init_ram(&vms->spark_boot_sram, NULL,
++                               "spark-boot-sram", 0x40000, &error_fatal);
++        memory_region_add_subregion_overlap(sysmem, 0x00100000,
++                                             &vms->spark_boot_sram, 1);
++        if (secure_sysmem) {
++            memory_region_init_alias(&vms->spark_boot_sram_secure, OBJECT(vms),
++                                     "spark-boot-sram-secure",
++                                     &vms->spark_boot_sram, 0, 0x40000);
++            memory_region_add_subregion_overlap(secure_sysmem, 0x00100000,
++                                               &vms->spark_boot_sram_secure, 1);
++        }
++    }
+ 
+     /* If we have an EL3 boot ROM then the assumption is that it will
+      * implement PSCI itself, so disable QEMU's internal implementation
+@@ -3262,6 +3747,26 @@
  
      vms->machine_done.notify = virt_machine_done;
      qemu_add_machine_init_done_notifier(&vms->machine_done);
@@ -358,7 +579,7 @@
  }
  
  static bool virt_get_secure(Object *obj, Error **errp)
-@@ -4213,6 +4513,15 @@
+@@ -4213,6 +4718,15 @@
          NULL, NULL);
      object_class_property_set_description(oc, "acpi",
          "Enable ACPI");
@@ -394,13 +615,27 @@
  struct VirtMachineState {
      MachineState parent;
      Notifier machine_done;
-@@ -166,6 +177,15 @@
+@@ -166,6 +177,29 @@
      FWCfgState *fw_cfg;
      PFlashCFI01 *flash[2];
      bool secure;
 +    bool spark_fw_lab;
 +    bool spark_rot_error_replies;
 +    SparkRotMailbox spark_rot[2];
++    MemoryRegion spark_ecam;
++    uint8_t spark_root_config[15][4096];
++    MemoryRegion spark_pcie_cfg[36];
++    uint8_t spark_pcie_cfgregs[36][0x10000];
++    MemoryRegion spark_boardcfg;
++    uint32_t spark_boardregs[1024];
++    MemoryRegion spark_fuse;
++    uint32_t spark_fuse_regs[0x10000 / 4];
++    MemoryRegion spark_pcie_syscfg;
++    uint32_t spark_pcie_sysregs[1024];
++    MemoryRegion spark_usb_config[36];
++    uint32_t spark_usb_regs[36][0x20000 / 4];
++    MemoryRegion spark_boot_sram;
++    MemoryRegion spark_boot_sram_secure;
 +    MemoryRegion spark_eint_mmio;
 +    MemoryRegion spark_eint_banks[4];
 +    uint32_t spark_eint[4][1024];

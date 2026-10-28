@@ -75,6 +75,26 @@
       "id": "qemu-psci-implementation",
       "url": "https://github.com/qemu/qemu/blob/v11.1.2/target/arm/tcg/psci.c",
       "supports": "Default virt PSCI conduit returns unsupported for unimplemented function IDs"
+    },
+    {
+      "id": "edk2-standalone-mm-entry",
+      "url": "https://github.com/tianocore/edk2/blob/master/ArmPkg/Library/ArmStandaloneMmCoreEntryPoint/ArmStandaloneMmCoreEntryPoint.c",
+      "supports": "Public Standalone MM entry and FF-A concepts; pinned Spark implementation differs"
+    },
+    {
+      "id": "hafnium-partition-manifest",
+      "url": "https://github.com/TF-Hafnium/hafnium/blob/main/inc/hf/ffa_partition_manifest.h",
+      "supports": "Partition manifest exception-level enumeration, including S-EL1"
+    },
+    {
+      "id": "linux-mtk-usb-ippc",
+      "url": "https://github.com/torvalds/linux/blob/master/drivers/usb/host/xhci-mtk.c",
+      "supports": "IPPC reset/power, clock status and USB2/USB3 port-count semantics"
+    },
+    {
+      "id": "qemu-xhci-sysbus",
+      "url": "https://github.com/qemu/qemu/blob/v11.1.2/hw/usb/hcd-xhci-sysbus.c",
+      "supports": "Existing QEMU system-bus xHCI core used at Spark USB apertures"
     }
   ]
 }
