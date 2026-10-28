@@ -2,14 +2,13 @@
 """Execute unchanged Spark SEC and DXE entries under QEMU, then optionally continue."""
 
 import argparse
+from contextlib import ExitStack
 from datetime import datetime, timezone
 import json
 import lzma
 from pathlib import Path
 import re
 import shutil
-import socket
-import struct
 import subprocess
 import sys
 import tempfile
@@ -17,126 +16,11 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tools.spark_image import prepare
-from tools.dxe_protocols import inspect_protocols
 from tools.download_firmware import require_ignored_untracked
-
-
-def boot_arguments():
-    """A synthetic loader handoff for a 1 GiB RAM scenario; not a hardware capture."""
-    entries = [("MMIO", 0, 0x40000000, 0),
-               ("MMAP_TINY_UEFI", 0x80000000, 0x08000000, 1),
-               ("MMAP_FREE_BASE_1", 0x88000000, 0x38000000, 1)]
-    # SEC copies the complete 0x1868-byte memory tag into a GUID HOB.
-    result = bytearray(0x1868 + 8)
-    struct.pack_into("<II", result, 0, 0x1868, 0x88610005)
-    struct.pack_into("<I", result, 0x78, len(entries))
-    for index, (name, base, size, flags) in enumerate(entries):
-        offset = 0x80 + 56 * index
-        result[offset:offset + len(name)] = name.encode("ascii")
-        struct.pack_into("<QQI", result, offset + 32, base, size, flags)
-    return bytes(result)
-
-
-def connect_unix(path, process, timeout=10):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        connection = socket.socket(socket.AF_UNIX)
-        connection.settimeout(timeout)
-        try:
-            connection.connect(str(path))
-            return connection
-        except (FileNotFoundError, ConnectionRefusedError):
-            connection.close()
-            if process.poll() is not None:
-                raise RuntimeError("QEMU exited before its debug connection opened; see serial.log")
-            time.sleep(0.05)
-    raise TimeoutError("QEMU debug connection did not open")
-
-
-class GdbRemote:
-    def __init__(self, connection):
-        self.connection = connection
-
-    def send(self, command):
-        payload = command.encode("ascii")
-        self.connection.sendall(b"$" + payload + b"#" + f"{sum(payload) & 255:02x}".encode())
-
-    def request(self, command):
-        self.send(command)
-        while True:
-            value = self.connection.recv(1)
-            if not value:
-                raise RuntimeError("QEMU closed the GDB connection")
-            if value == b"$":
-                break
-        encoded = bytearray()
-        while (value := self.connection.recv(1)) != b"#":
-            if not value:
-                raise RuntimeError("truncated GDB packet")
-            encoded += value
-        checksum = b""
-        while len(checksum) < 2:
-            chunk = self.connection.recv(2 - len(checksum))
-            if not chunk:
-                raise RuntimeError("truncated GDB checksum")
-            checksum += chunk
-        if int(checksum, 16) != sum(encoded) & 255:
-            raise RuntimeError("GDB packet checksum mismatch")
-        self.connection.sendall(b"+")
-        decoded = bytearray()
-        escaped = False
-        for value in encoded:
-            if escaped:
-                decoded.append(value ^ 0x20)
-                escaped = False
-            elif value == 0x7d:
-                escaped = True
-            else:
-                decoded.append(value)
-        return decoded.decode("ascii")
-
-    def pc(self):
-        reply = self.request("p20")
-        if not re.fullmatch("[0-9a-fA-F]{16}", reply):
-            raise RuntimeError(f"could not read AArch64 PC: {reply}")
-        return int.from_bytes(bytes.fromhex(reply), "little")
-
-    def checkpoint(self, address):
-        packet = f"1,{address:x},4"
-        if self.request("Z" + packet) != "OK":
-            raise RuntimeError("QEMU refused the execution breakpoint")
-        stop = self.request("c")
-        actual = self.pc()
-        if not stop.startswith(("T05", "S05")) or actual != address:
-            raise RuntimeError(f"checkpoint {address:#x} not reached; stopped at {actual:#x}")
-        if self.request("z" + packet) != "OK":
-            raise RuntimeError("QEMU refused to remove the execution breakpoint")
-        self.request("s")
-        after = self.pc()
-        if after != address + 4:
-            raise RuntimeError("checkpoint instruction did not advance to its expected successor")
-        return {"entry_pc": hex(address), "pc_after_single_step": hex(after)}
-
-
-class Qmp:
-    def __init__(self, connection):
-        self.stream = connection.makefile("rwb", buffering=0)
-        if "QMP" not in json.loads(self.stream.readline()):
-            raise RuntimeError("missing QMP greeting")
-        self.request("qmp_capabilities")
-
-    def request(self, command, arguments=None):
-        self.stream.write((json.dumps({"execute": command, "arguments": arguments or {}}) + "\n").encode())
-        while True:
-            line = self.stream.readline()
-            if not line:
-                raise RuntimeError("QEMU closed the QMP connection")
-            response = json.loads(line)
-            if "error" in response:
-                raise RuntimeError(str(response["error"]))
-            if "return" in response:
-                return response["return"]
+from tools.dxe_protocols import inspect_protocols
+from tools.handoff import diagnostic_boot_arguments
+from tools.qemu_control import GdbRemote, Qmp, connect_unix
+from tools.spark_image import prepare
 
 
 def run(qemu, seconds, experimental, rot_error_replies=False):
@@ -153,7 +37,7 @@ def run(qemu, seconds, experimental, rot_error_replies=False):
                  "run.json", "dxe-core-memory.bin"):
         require_ignored_untracked(ROOT, output / name)
     handoff = output / "bootargs.bin"
-    handoff.write_bytes(boot_arguments())
+    handoff.write_bytes(diagnostic_boot_arguments())
     record = {"firmware": layout, "synthetic_loader_handoff": True,
               "firmware_modified": False, "full_boot_verified": False,
               "experimental_address_profile": experimental,
@@ -178,12 +62,10 @@ def run(qemu, seconds, experimental, rot_error_replies=False):
         record["qemu_version"] = subprocess.check_output([qemu, "--version"], text=True).splitlines()[0]
         with (output / "serial.log").open("wb") as serial:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=serial, stderr=subprocess.STDOUT)
-            connections = []
+            resources = ExitStack()
             try:
-                connections.append(connect_unix(qmp_path, process))
-                qmp = Qmp(connections[-1])
-                connections.append(connect_unix(gdb_path, process, timeout=30))
-                gdb = GdbRemote(connections[-1])
+                qmp = resources.enter_context(Qmp(connect_unix(qmp_path, process)))
+                gdb = resources.enter_context(GdbRemote(connect_unix(gdb_path, process, timeout=30)))
                 if gdb.request("P0=" + (0x80010000).to_bytes(8, "little").hex()) != "OK":
                     raise RuntimeError("could not set the loader's x0 handoff pointer")
                 record["checkpoints"]["sec"] = gdb.checkpoint(layout["sec_entry"])
@@ -221,8 +103,7 @@ def run(qemu, seconds, experimental, rot_error_replies=False):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-                for connection in connections:
-                    connection.close()
+                resources.close()
                 (output / "run.json").write_text(json.dumps(record, indent=2) + "\n")
                 print(f"Local run evidence: {output}", flush=True)
     serial_text = (output / "serial.log").read_text(errors="replace")
@@ -247,7 +128,7 @@ def run(qemu, seconds, experimental, rot_error_replies=False):
     (output / "run.json").write_text(json.dumps(record, indent=2) + "\n")
     if fault:
         raise RuntimeError(f"firmware stopped at exception {fault.group(1)}; full boot is incomplete")
-    print("Full Spark firmware boot is not yet verified.")
+    print("This diagnostic stops before MM/BDS. Use tools/boot_spark.py for full UEFI boot.")
     return output
 
 

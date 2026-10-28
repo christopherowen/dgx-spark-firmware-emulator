@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import unittest
 
-from tools.boot_spark import boot_arguments
+from tools.handoff import boot_arguments
 from tools.prepare_mm import unpack_mm
 
 ROOT = Path(__file__).resolve().parents[1]

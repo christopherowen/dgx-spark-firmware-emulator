@@ -10,7 +10,7 @@ import time
 import unittest
 import zlib
 
-from tools.run_spark import Qmp, connect_unix
+from tools.qemu_control import Qmp, connect_unix
 
 OWN, EOR, FS, LS = (1 << n for n in (31, 30, 29, 28))
 
@@ -54,8 +54,8 @@ class NicIntegrationTests(unittest.TestCase):
         self.assertEqual(self.read(0xf300100100, 4), 0xffffffff)  # no devfn spill
         self.assertEqual(self.read(self.base, 4), 0x12005452)
         qmp_socket = connect_unix(root / "qmp", self.process)
-        self.addCleanup(qmp_socket.close)
-        Qmp(qmp_socket).request("cont")
+        with Qmp(qmp_socket) as qmp:
+            qmp.request("cont")
 
     def stop(self):
         self.process.terminate()

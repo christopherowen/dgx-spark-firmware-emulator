@@ -5,13 +5,13 @@ import lzma
 import struct
 import unittest
 
-from tools.run_spark import GdbRemote, boot_arguments
+from tools.handoff import diagnostic_boot_arguments
 from tools.spark_image import FMP_GUID, SOC_GUID, capsule_payload, unpack_uefi
 
 
 class BootInputTests(unittest.TestCase):
     def test_loader_tag_has_full_fixed_size_and_zero_terminator(self):
-        data = boot_arguments()
+        data = diagnostic_boot_arguments()
         self.assertEqual(struct.unpack_from("<II", data), (0x1868, 0x88610005))
         self.assertEqual(len(data), 0x1868 + 8)
         self.assertEqual(data[-8:], bytes(8))
@@ -49,17 +49,3 @@ class BootInputTests(unittest.TestCase):
             unpack_uefi(payload, "0" * 64)
         with self.assertRaises(ValueError):
             unpack_uefi(payload[:65], digest)
-
-    def test_breakpoint_requires_exact_pc_and_an_executed_instruction(self):
-        class Remote(GdbRemote):
-            def __init__(self, pcs):
-                self.pcs = iter(pcs)
-            def request(self, command):
-                return "T05" if command in ("c", "s") else "OK"
-            def pc(self):
-                return next(self.pcs)
-        self.assertEqual(Remote([0x1234, 0x1238]).checkpoint(0x1234),
-                         {"entry_pc": "0x1234", "pc_after_single_step": "0x1238"})
-        for pcs in ([0x9999], [0x1234, 0x1234]):
-            with self.subTest(pcs=pcs), self.assertRaises(RuntimeError):
-                Remote(pcs).checkpoint(0x1234)

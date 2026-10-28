@@ -20,7 +20,7 @@ exact emulated firmware version or its preceding boot-ROM handoff.
 | External interrupts | `NVDA9221`, bank bases `0x12410000`, `0x12e00000`, `0x12800000`, `0x1c54a000`, parent GSI 563 | Configuration and software IRQs; external pins and debounce timing absent |
 | ROT0 | `NVDA8600`, `0x18010000`, length `0x1000` | Unimplemented by default; optional transport error replies |
 | ROT1 | `NVDA8601`, `0x18020000`, length `0x1000` | Same optional failure scenario |
-| PCI ECAM | Segments 0–14 at `0xf300000000` plus `0x10000000` per segment; segment 15 at `0x29000000` | Minimal empty type-1 roots for segments 0–14; no downstream devices or GPU |
+| PCI ECAM | Segments 0–14 at `0xf300000000` plus `0x10000000` per segment; segment 15 at `0x29000000` | Minimal type-1 roots for segments 0–14; segment 0 optionally connects the lab RTL8168 NIC; no GPU |
 
 ACPI identifies the eleven existing GPIO/pad banks as part of `NVDA9221` too.
 Its resource list and device properties associate the four EINT banks with

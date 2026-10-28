@@ -1,202 +1,98 @@
 # DGX Spark firmware emulation lab
 
-The goal is to execute DGX Spark firmware in a reproducible emulator, including
-the MediaTek MT8901-related hardware and firmware interfaces needed along the way.
+Run DGX Spark SoC boot firmware in QEMU, with original models for the platform
+interfaces it needs. The unchanged SoC **2.158.15** UEFI and Standalone MM images
+boot to interactive AMI setup and execute an EFI application over native IPv4
+PXE. Keyboard navigation, all 13 architectural protocols and persistent NVRAM
+are verified. See [measured boot status](docs/boot-status.md) for the evidence.
 
-**Status: real Spark UEFI boots to AMI setup and executes an EFI program over IPv4 PXE in QEMU.** The unchanged
-SoC **2.158.15** UEFI and Standalone MM images run together with this project's
-original lab monitor. Main → Advanced keyboard navigation, all 13 required
-UEFI architectural protocols, and a second boot using saved NVRAM are verified.
-See the [measured boot status](docs/boot-status.md) for scope and limitations.
+This is an independent project, unaffiliated with NVIDIA, MediaTek, AMI,
+Antmicro or QEMU. Firmware is downloaded from its official source into ignored
+local storage and is never redistributed through this repository.
 
-## Approach
+## Requirements
 
-Start with **QEMU for the application processor / SoC boot and UEFI path**.
-Evaluate **Renode for isolated controllers and peripheral models** after the
-actual firmware, instruction set, reset state, and interfaces are identified.
-Renode has Arm64 support; it should not be dismissed as MCU-only. Neither
-backend gives us a Spark model simply by selecting an Arm CPU.
+Use macOS or Linux with Python 3.10+, Git, 7-Zip (`7zz` or `7z`), Clang, LLD,
+LLVM objcopy and the [QEMU build dependencies](qemu/README.md). Homebrew's
+`llvm` and `lld` provide the monitor/probe toolchain on macOS; Ubuntu packages
+are `clang lld llvm`.
 
-MediaTek MT8901 appears in NVIDIA's Linux pinctrl, peripheral, and power-control
-work. Those drivers are evidence about interfaces; they do not establish the
-ISA or boot flow of every internal firmware processor. This project keeps
-unknown addresses and entry points explicitly unknown.
+## Build and boot
 
-See the [backend decision](docs/architecture.md), [milestones](docs/roadmap.md),
-and [primary sources](research/sources.json). Findings were checked on
-2026-10-28. This is an independent project, unaffiliated with NVIDIA, MediaTek,
-Antmicro, or QEMU.
-
-## Boot Spark UEFI
-
-Requires Python 3.10+, 7-Zip (`7zz` or `7z`), Clang, LLD, LLVM objcopy,
-and the [QEMU build dependencies](qemu/README.md). On macOS, Homebrew's `llvm`
-and `lld` provide the monitor toolchain. On Ubuntu, install `clang lld llvm`.
+Run from the repository root:
 
 ```sh
 python3 tools/build_qemu.py
 python3 tools/boot_spark.py
 ```
 
-The runner downloads pinned official SoC **2.158.15** firmware directly from
-LVFS, checks cabinet/capsule/UEFI/MM hashes, and extracts both unchanged images
-locally. It builds the original monitor, boots one AArch64 CPU under TCG, and
-opens AMI setup over the serial terminal. Arrow keys navigate; **Ctrl-C** ends
-the session and saves the emulated variable store. Exit setup's menus without
-requesting a firmware reboot; use a new emulator process for a cold boot.
+The runner downloads the pinned official LVFS SoC update, verifies its cabinet,
+capsule, UEFI and MM hashes, then builds the original lab monitor and boots one
+AArch64 CPU under TCG. AMI setup opens over the serial terminal. Arrow keys
+navigate; **Ctrl-C** ends the session and saves the emulated variable store.
+Use a new emulator process for each cold boot; warm reset is unsupported.
 
-For an automated check that opens setup, navigates to Advanced, verifies all
-architectural protocols, saves NVRAM, and stops:
+## Verify setup and PXE
 
 ```sh
 python3 tools/boot_spark.py --smoke-test
-```
-
-Run it twice to exercise persistence. NVRAM is in `firmware/state/spark-nor.bin`;
-per-run UART logs, a DXE snapshot, input hashes and `run.json` are in
-`firmware/runs/`. All firmware, state, captures and generated binaries are
-Git-ignored. Select a separate fresh store with
-`--state-file firmware/state/another-nor.bin`.
-
-## Verify native PXE boot
-
-```sh
 python3 tools/boot_spark.py --pxe-test --state-file firmware/state/pxe-nor.bin
 ```
 
-This boots the unchanged Spark firmware's bundled Realtek UNDI, SNP, DHCP and
-PXE drivers using an original RTL8168C compatibility NIC. QEMU's isolated user
-network supplies DHCP and TFTP. The firmware obtains an address, downloads
-this project's original AArch64 EFI probe and executes it. No additional
-network driver or replacement PXE firmware is loaded.
+| Check | Success requires |
+| --- | --- |
+| Setup | Actual AMI setup, right-arrow navigation to Advanced, all 13 architectural protocols and a saved NOR snapshot |
+| IPv4 PXE | Matching DHCP discover/offer/request/ACK, an acknowledged TFTP download matching the exact EFI probe, a fresh execution token and all 13 protocols |
 
-Success requires a complete DHCP discover/offer/request/ACK, an acknowledged
-TFTP transfer matching the exact probe bytes, a fresh execution token printed
-by that probe, and all 13 architectural protocols. The probe is served from a
-dedicated directory containing only that file. The runner stops automatically
-and saves NVRAM. Packet captures, generated EFI binaries and logs remain under
-ignored `firmware/runs/`; `run.json` records the checks and hashes. A fresh NOR
-store works with the firmware's default IPv4 PXE settings; an existing store
-must have network boot enabled.
+Both checks stop automatically and save NVRAM. Run them again with the same
+state file to check a subsequent cold boot. A fresh NOR store uses the vendor
+firmware's default IPv4 PXE settings; an existing store must have network boot
+enabled. The modes are mutually exclusive. Increase `--timeout` on a slower host;
+`python3 tools/boot_spark.py --help` lists all options.
 
-This verifies IPv4 PXE into an EFI application. IPv6, HTTP boot, Secure Boot
-image acceptance and operating-system boot are not yet verified. The NIC is a
-limited compatibility device, not an emulation of Spark's physical network
-controllers or their embedded firmware. See the [profile](qemu/README.md).
+PXE uses Spark's bundled Realtek UNDI/SNP/DHCP/PXE drivers and an original
+RTL8168C compatibility NIC. QEMU's restricted user network provides DHCP/TFTP;
+only the generated original EFI probe is served. No additional EFI network
+driver or iPXE is loaded.
 
-The UEFI payload and its real MM variable firmware run using an emulated
-loader/monitor environment. Earlier silicon boot stages, GPU and physical NIC
-firmware, production security services and an OS are outside the verified result. RoT
-requests receive explicit errors. Some cached board/SMBIOS fields are placeholders,
-including setup's total-memory display. See the [monitor](monitor/README.md)
-and [profile](qemu/README.md) for modeled interfaces.
+## Local files
 
-The earlier diagnostic command remains available:
+| Path | Contents |
+| --- | --- |
+| `firmware/downloads/`, `firmware/prepared/` | Pinned vendor inputs and unchanged extracted images |
+| `firmware/state/` | Persistent emulated NOR; default `spark-nor.bin` |
+| `firmware/runs/<UTC timestamp>/` | UART/QEMU logs, memory snapshots, PXE captures, generated probe and `run.json` |
+| `firmware/hardware/` | Read-only hardware inventory evidence |
+| `build/` | Upstream QEMU sources, dependencies and generated binaries |
 
-```sh
-python3 tools/run_spark.py
-```
+These directories are Git-ignored. Select a separate store with
+`--state-file firmware/state/another-nor.bin`. Failed runs preserve the previous
+store, and concurrent runs cannot share it. Never attach vendor images or
+captures to commits, releases, issues or CI artifacts. See
+[firmware handling](firmware/README.md).
 
-It checks exact SEC/DXE entry and first-instruction single-steps on stock QEMU.
-Its separate continuation experiments omit MM and are expected to fail; use
-`boot_spark.py` for the complete setup path.
+## Model scope and development
 
-## Collect read-only hardware evidence
+The lab executes real UEFI and MM using a synthetic loader/monitor environment.
+Earlier silicon boot stages, GPU and physical NIC firmware, production security
+services, secure stage-2 isolation, warm reset and migration are outside the
+verified result. IPv6/HTTP boot, Secure Boot image acceptance and OS boot remain
+untested. Some board/SMBIOS fields are placeholders.
 
-```sh
-python3 tools/collect_hardware.py USER@HOST
-```
+QEMU is the current backend for the SoC/UEFI path. Renode remains a candidate
+for isolated controllers once their ISA and load contract are known. Neither
+backend provides a Spark model simply by selecting an Arm CPU.
 
-Requires SSH access and passwordless `sudo` for inventory reads. Captures include
-ACPI tables, resource/interrupt maps, board and firmware versions, PCI inventory,
-and kernel logs. They stay locally in ignored `firmware/hardware/`. The tool
-does not access device registers directly, flash firmware, or change the host.
-See [hardware findings](docs/hardware-findings.md) for reviewed address facts.
-
-## Download other firmware locally
-
-Firmware may not be redistributed through this project. Download it directly
-from its vendor/LVFS source into **`firmware/downloads/`**, which is Git-ignored.
-The downloader always resolves that directory relative to this checkout,
-regardless of your current working directory.
-
-Supply the direct HTTPS download URL and its SHA-256 from upstream metadata:
-
-```sh
-python3 tools/download_firmware.py "$FIRMWARE_URL" \
-  --sha256 "$FIRMWARE_SHA256" --filename spark-soc.cab
-```
-
-The download is streamed to a temporary file, verified, then published locally.
-Its source URL, checksum, and size are saved alongside it in the same ignored
-directory. Mismatched downloads are discarded; existing files are preserved.
-The downloader refuses destinations that are tracked, unignored, or reached
-through symbolic links. It does not extract or install the image.
-
-Do not attach firmware to commits, GitHub releases, issues, or CI artifacts.
-Only downloader code and references to upstream sources belong in this repo.
-
-## Inspect a local firmware artifact
-
-Requires Python 3.10 or newer; no Python packages are needed.
-
-```sh
-python3 tools/spark_fw.py inspect /path/to/firmware.cap
-mkdir -p build
-python3 tools/spark_fw.py inspect /path/to/component.elf > build/inventory.json
-```
-
-The inspector reads a file, computes its SHA-256, and reports recognized
-top-level ELF, PE/COFF, FMP capsule, or CAB header metadata as JSON. Other
-formats remain `unknown`. It does not unpack, authenticate, execute, or flash
-firmware. A recognized header does not establish a runnable firmware image,
-and a raw binary does not establish an instruction set.
-
-Keep images in the ignored `firmware/` directory or outside the checkout.
-Review generated metadata before publishing it. See [artifact handling](firmware/README.md).
-
-## Run the generic QEMU baseline
-
-Install `qemu-system-aarch64` and generic AArch64 EDK II firmware containing an
-internal UEFI shell. On Apple Silicon with Homebrew QEMU:
-
-```sh
-python3 tools/spark_fw.py qemu-smoke \
-  --firmware /opt/homebrew/share/qemu/edk2-aarch64-code.fd
-```
-
-On Ubuntu with `qemu-system-arm` and `qemu-efi-aarch64` installed:
-
-```sh
-python3 tools/spark_fw.py qemu-smoke \
-  --firmware /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
-```
-
-The test uses software emulation, one Cortex-A72, a generic `virt` machine,
-512 MiB RAM, no network, and no attached host disks. **Cortex-A72 is only a
-baseline CPU choice; it does not model the GB10 CPU.** The firmware file is
-read-only. After 20 seconds the process is stopped, and success requires the
-`UEFI Interactive Shell` marker with no earlier QEMU process failure. Logs and
-run metadata go into ignored `build/`. Use `--timeout 60` on a slower host.
-
-This command accepts generic QEMU firmware, not an NVIDIA update capsule.
-Missing TPM or entropy-device diagnostics can appear on this minimal machine;
-the pass condition is shell entry, not a clean platform initialization report.
-
-## Development
+- [Boot status and limitations](docs/boot-status.md)
+- [QEMU profile and compatibility NIC](qemu/README.md)
+- [Monitor, flash, clock and entropy services](monitor/README.md)
+- [Development, diagnostics and hardware collection](docs/development.md)
+- [Backend decision](docs/architecture.md), [roadmap](docs/roadmap.md) and [primary sources](research/sources.json)
 
 ```sh
 python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-CI rejects tracked firmware/local artifacts, runs synthetic tests and the generic
-QEMU/EDK II smoke test, and builds the custom QEMU profile to test GPIO aliases,
-GICv3 identification, UART interrupt delivery, EINT software interrupts,
-NIC DMA/backend packet transfers, TRNG calls and Root of Trust error replies
-with original synthetic code. Vendor firmware is never downloaded by CI or
-uploaded as an artifact.
-The Apache-2.0 license covers this project's own tools and documentation. The QEMU
+The Apache-2.0 license covers original tools, monitor and documentation. The QEMU
 patch is GPL-2.0-or-later; firmware and external projects retain their licenses.
-
-Further work includes operating-system boot, storage and fuller platform models.

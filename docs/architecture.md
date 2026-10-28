@@ -1,7 +1,8 @@
 # Backend decision and evidence
 
 Decision date: 2026-10-28. Working focus: the DGX Spark SoC boot / UEFI path.
-This choice can change when a concrete firmware component is available.
+QEMU now runs the pinned SoC 2.158.15 UEFI and Standalone MM payloads; see
+[measured boot status](boot-status.md) for the verified execution boundary.
 
 ## What is established
 
@@ -42,7 +43,7 @@ one side of a protocol, not the remote processor's implementation.
 | AArch64 application processor and UEFI work | Preferred starting backend; existing Arm system and reference-board models | Arm64 cores exist; exact firmware CPU/system requirements still need validation |
 | Custom registers and controller behavior | C device models and board integration | C# peripheral models, platform descriptions, tracing and test APIs |
 | Isolated MT8901-related controller firmware | Evaluate once its ISA and load contract are known | Strong candidate if the actual core and required features are supported |
-| Unmodified DGX Spark firmware today in this project | SEC/DXE entry verified; optional profile reaches serial checkpoint 61, then faults | Not implemented |
+| Unmodified DGX Spark firmware in this project | UEFI and real MM reach AMI setup; native IPv4 PXE downloads and executes an original EFI application | Not implemented |
 | GB10 GPU execution / CUDA | No implementation here | No implementation here |
 
 QEMU's [`virt` board][qemu-virt] deliberately describes generic virtual hardware.
@@ -69,9 +70,9 @@ USB PD controller, NIC, or other firmware processors. CPU feature requirements,
 exception level, secure monitor/FF-A services, reset vectors, RAM/flash layout,
 interrupt wiring, and capsule payload boundaries must come from evidence.
 
-The initial tools do not change a physical Spark. They inspect local files and
-run an offline generic VM. No register writes, update operations, or automatic
-hardware collection are included.
+The tools inspect local artifacts and run the emulator. The separate,
+explicitly invoked hardware collector performs read-only SSH inventory reads.
+No physical register writes or firmware update operations are implemented.
 
 [nvidia-stack]: https://docs.nvidia.com/dgx/dgx-spark-porting-guide/latest/porting/software-requirements.html
 [nvidia-release]: https://docs.nvidia.com/dgx/dgx-spark/release-notes.html
