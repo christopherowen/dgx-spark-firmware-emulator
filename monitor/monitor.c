@@ -268,6 +268,57 @@ static int rtc_service(u64 *r) {
     r[4] = data;
     return 1;
 }
+/* SMCCC TRNG 1.0 backed by QEMU RNDR and its host CSPRNG. */
+static int trng_supported(u32 fid) {
+    return fid == 0x84000050 || fid == 0x84000051 || fid == 0x84000052 ||
+           fid == 0x84000053 || fid == 0xc4000053;
+}
+static void trng(u64 *r, u32 fid) {
+    u64 request = fid == 0xc4000053 ? r[1] : (u32)r[1];
+    for (int i = 0; i < 4; i++)
+        r[i] = 0;
+    if (!(READ(ID_AA64ISAR0_EL1) >> 60)) {
+        r[0] = -1UL;
+        return;
+    }
+    if (fid == 0x84000050) {
+        r[0] = 0x10000;
+        return;
+    }
+    if (fid == 0x84000051) {
+        r[0] = trng_supported((u32)request) ? 0 : -1UL;
+        return;
+    }
+    if (fid == 0x84000052) {
+        /* Independent lab UUID, not a vendor entropy-service identity. */
+        r[0] = 0x11f121ff; r[1] = 0x4713da74;
+        r[2] = 0xafac5a92; r[3] = 0xe451ab87;
+        return;
+    }
+    unsigned width = fid == 0xc4000053 ? 64 : 32;
+    if (!request || request > width * 3) {
+        r[0] = -2UL;
+        return;
+    }
+    unsigned part = 0;
+    while (request) {
+        u64 entropy;
+        unsigned available;
+        __asm__ volatile("mrs %0, S3_3_C2_C4_0; cset %w1, ne"
+                         : "=r"(entropy), "=r"(available) :: "cc");
+        if (!available) {
+            for (int i = 1; i < 4; i++)
+                r[i] = 0;
+            r[0] = -3UL;
+            return;
+        }
+        unsigned bits = request > width ? width : request;
+        r[3 - part] = bits == 64 ? entropy : entropy & ((1UL << bits) - 1);
+        request -= bits;
+        part++;
+    }
+}
+
 void handle(u64 *r, u64 level) {
     u64 esr = level == 3 ? READ(ESR_EL3) : READ(ESR_EL2);
     u32 fid = r[0];
@@ -317,6 +368,7 @@ void handle(u64 *r, u64 level) {
     }
     if (fid == 0xc400008d && ns && (r[1] & 0xffff) == 0x8003 && rtc_service(r))
         return;
+    if (trng_supported(fid)) { trng(r, fid); return; }
     if (fid == 0x84000063) {
         r[0] = 0x10002;
         return;

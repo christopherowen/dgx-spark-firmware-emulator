@@ -95,6 +95,26 @@
       "id": "qemu-xhci-sysbus",
       "url": "https://github.com/qemu/qemu/blob/v11.1.2/hw/usb/hcd-xhci-sysbus.c",
       "supports": "Existing QEMU system-bus xHCI core used at Spark USB apertures"
+    },
+    {
+      "id": "linux-realtek-r8169",
+      "url": "https://github.com/torvalds/linux/blob/v6.12/drivers/net/ethernet/realtek/r8169_main.c",
+      "supports": "RTL8168C XID, normal descriptor ownership/ring flags, PHY/ERI/CSI/EPHY/OCP register interfaces"
+    },
+    {
+      "id": "tf-a-smccc-trng",
+      "url": "https://github.com/ARM-software/arm-trusted-firmware/blob/master/services/std_svc/trng/trng_main.c",
+      "supports": "SMCCC TRNG discovery, request bounds, return codes and bit packing"
+    },
+    {
+      "id": "qemu-rndr-host-entropy",
+      "url": "https://github.com/qemu/qemu/blob/v11.1.2/target/arm/helper.c",
+      "supports": "QEMU RNDR implementation uses qemu_guest_getrandom host entropy"
+    },
+    {
+      "id": "qemu-user-network",
+      "url": "https://www.qemu.org/docs/master/system/invocation.html",
+      "supports": "Restricted user network DHCP/TFTP and packet filter-dump configuration"
     }
   ]
 }

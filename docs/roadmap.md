@@ -64,7 +64,8 @@ any claim of controller firmware execution includes a real instruction trace.
 
 - [x] Add the synthetic loader/monitor handoff and required MM, flash and RTC services.
 - [x] Boot real Spark UEFI and MM to an interactive setup console.
-- [x] Document model gaps, including absent GPU/NIC devices, warm reset and secure isolation.
+- [x] Boot an original EFI application over native Spark IPv4 PXE; verify DHCP and exact TFTP transfer.
+- [x] Document model gaps, including absent GPU/physical NIC firmware, warm reset and secure isolation.
 
 Further work: boot an OS using modeled storage, implement warm reset and fuller
 PCIe/USB behavior, and replace remaining loader/board approximations with

@@ -44,8 +44,13 @@ def build(jobs):
         source.mkdir()
         subprocess.run(["tar", "-xzf", str(archive), "-C", str(source), "--strip-components=1"], check=True)
     if not stamp.exists():
-        subprocess.run(["git", "apply", "--check", str(patch)], cwd=source, check=True)
-        subprocess.run(["git", "apply", str(patch)], cwd=source, check=True)
+        # Apply as a standalone source tree. Otherwise Git can discover the
+        # parent lab repository and silently skip newly added files in build/.
+        patch_environment = dict(os.environ, GIT_CEILING_DIRECTORIES=str(directory))
+        subprocess.run(["git", "apply", "--check", str(patch)], cwd=source,
+                       env=patch_environment, check=True)
+        subprocess.run(["git", "apply", str(patch)], cwd=source,
+                       env=patch_environment, check=True)
         stamp.write_text(patch_hash + "\n")
     elif stamp.read_text().strip() != patch_hash:
         raise ValueError("QEMU patch changed; remove build/qemu-src and rebuild")
@@ -55,10 +60,12 @@ def build(jobs):
                "--ninja=" + str(host / "bin" / "ninja"), "--disable-werror", "--disable-docs",
                "--disable-gtk", "--disable-sdl", "--disable-cocoa", "--disable-pvg",
                "--disable-opengl", "--disable-vnc", "--disable-tools", "--disable-capstone",
-               "--disable-slirp", "--disable-gnutls", "--disable-libssh"]
-    subprocess.run(options, cwd=output, check=True)
+               "--enable-slirp", "--disable-gnutls", "--disable-libssh"]
+    # Meson may regenerate build files during Ninja; it also needs Ninja on PATH.
+    environment = dict(os.environ, PATH=str(host / "bin") + os.pathsep + os.environ.get("PATH", ""))
+    subprocess.run(options, cwd=output, env=environment, check=True)
     subprocess.run([str(host / "bin" / "ninja"), "-C", str(output), "-j", str(jobs),
-                    "qemu-system-aarch64"], check=True)
+                    "qemu-system-aarch64"], env=environment, check=True)
     print(f"Built experimental QEMU: {output / 'qemu-system-aarch64'}")
 
 

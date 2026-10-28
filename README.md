@@ -3,7 +3,7 @@
 The goal is to execute DGX Spark firmware in a reproducible emulator, including
 the MediaTek MT8901-related hardware and firmware interfaces needed along the way.
 
-**Status: real Spark UEFI boots to interactive AMI setup in QEMU.** The unchanged
+**Status: real Spark UEFI boots to AMI setup and executes an EFI program over IPv4 PXE in QEMU.** The unchanged
 SoC **2.158.15** UEFI and Standalone MM images run together with this project's
 original lab monitor. Main → Advanced keyboard navigation, all 13 required
 UEFI architectural protocols, and a second boot using saved NVRAM are verified.
@@ -58,9 +58,35 @@ per-run UART logs, a DXE snapshot, input hashes and `run.json` are in
 Git-ignored. Select a separate fresh store with
 `--state-file firmware/state/another-nor.bin`.
 
-This boots the UEFI payload and its real MM variable firmware using an emulated
-loader/monitor environment. Earlier silicon boot stages, GPU/NIC devices,
-production security services and an OS are outside the verified result. RoT
+## Verify native PXE boot
+
+```sh
+python3 tools/boot_spark.py --pxe-test --state-file firmware/state/pxe-nor.bin
+```
+
+This boots the unchanged Spark firmware's bundled Realtek UNDI, SNP, DHCP and
+PXE drivers using an original RTL8168C compatibility NIC. QEMU's isolated user
+network supplies DHCP and TFTP. The firmware obtains an address, downloads
+this project's original AArch64 EFI probe and executes it. No additional
+network driver or replacement PXE firmware is loaded.
+
+Success requires a complete DHCP discover/offer/request/ACK, an acknowledged
+TFTP transfer matching the exact probe bytes, a fresh execution token printed
+by that probe, and all 13 architectural protocols. The probe is served from a
+dedicated directory containing only that file. The runner stops automatically
+and saves NVRAM. Packet captures, generated EFI binaries and logs remain under
+ignored `firmware/runs/`; `run.json` records the checks and hashes. A fresh NOR
+store works with the firmware's default IPv4 PXE settings; an existing store
+must have network boot enabled.
+
+This verifies IPv4 PXE into an EFI application. IPv6, HTTP boot, Secure Boot
+image acceptance and operating-system boot are not yet verified. The NIC is a
+limited compatibility device, not an emulation of Spark's physical network
+controllers or their embedded firmware. See the [profile](qemu/README.md).
+
+The UEFI payload and its real MM variable firmware run using an emulated
+loader/monitor environment. Earlier silicon boot stages, GPU and physical NIC
+firmware, production security services and an OS are outside the verified result. RoT
 requests receive explicit errors. Some cached board/SMBIOS fields are placeholders,
 including setup's total-memory display. See the [monitor](monitor/README.md)
 and [profile](qemu/README.md) for modeled interfaces.
@@ -166,11 +192,11 @@ python3 tools/check_publication.py
 
 CI rejects tracked firmware/local artifacts, runs synthetic tests and the generic
 QEMU/EDK II smoke test, and builds the custom QEMU profile to test GPIO aliases,
-GICv3 identification, UART interrupt delivery, EINT software interrupts, and
-Root of Trust error replies with original synthetic code. Vendor
-firmware is never downloaded by CI or uploaded as an artifact.
+GICv3 identification, UART interrupt delivery, EINT software interrupts,
+NIC DMA/backend packet transfers, TRNG calls and Root of Trust error replies
+with original synthetic code. Vendor firmware is never downloaded by CI or
+uploaded as an artifact.
 The Apache-2.0 license covers this project's own tools and documentation. The QEMU
 patch is GPL-2.0-or-later; firmware and external projects retain their licenses.
 
-The first Spark-specific execution checkpoint is implemented. Next is modeling
-the remaining platform and secure firmware services toward the firmware console.
+Further work includes operating-system boot, storage and fuller platform models.

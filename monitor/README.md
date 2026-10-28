@@ -31,6 +31,13 @@ and RTC set-time request used by the real UEFI clock driver. It starts at
 of host time. Alarm and unrelated PMIC services return unsupported. Clock state
 is per process; persistent UEFI variables are independent of the clock.
 
+SMCCC TRNG 1.0 discovery and 32/64-bit random requests are backed by QEMU's RNDR
+instruction, which obtains entropy from the host CSPRNG. The service uses its
+own lab UUID, checks request sizes and clears unused bits. Missing RNDR and
+entropy failures return errors. This allows Spark's real RngDxe to install the
+EFI RNG protocol required by its network stack. No fixed seed or substitute
+UEFI RNG protocol is used; this is not execution of vendor TRNG firmware.
+
 The synthetic loader reserves the monitor/stacks, MM/package/page-table and
 communication memory, and the NOR backing. Boot SRAM and board/fuse values in
 the QEMU profile are approximations. No secure stage-2 isolation, authenticated
@@ -40,6 +47,7 @@ firmware research lab. Use a new QEMU process for each cold boot.
 
 The synthetic integration test executes original S-EL1 and NS-EL2 guests,
 checks MM discovery and bad mapping rejection, makes two world switches,
-checks FP/SIMD and thread-register preservation, and checks timer PPI 30.
+checks FP/SIMD and thread-register preservation, TRNG discovery/bounds/bit
+packing/nonrepeating requests, and timer PPI 30.
 Native tests exercise the exact `nor.c` used by the monitor. CI has no vendor
 inputs and publishes no firmware or execution captures.

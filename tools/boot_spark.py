@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import selectors
 import shutil
 import struct
@@ -26,6 +27,7 @@ from tools.build_monitor import build_monitor
 from tools.download_firmware import require_ignored_untracked
 from tools.dxe_protocols import inspect_protocols
 from tools.prepare_mm import MM_SHA256, prepare_mm
+from tools.pxe import build_probe, verify_capture
 from tools.run_spark import Qmp, connect_unix
 from tools.spark_image import DIRECTORY, UEFI_SHA256
 
@@ -72,7 +74,7 @@ def terminal_raw(enabled):
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, saved)
 
 
-def run(qemu, smoke, timeout, state_path):
+def run(qemu, smoke, timeout, state_path, pxe=False):
     qemu = shutil.which(qemu)
     if qemu is None:
         raise ValueError("build the Spark QEMU profile first: python3 tools/build_qemu.py")
@@ -95,15 +97,27 @@ def run(qemu, smoke, timeout, state_path):
         if state.stat().st_size != 0x100000:
             raise ValueError("NOR state must be exactly 1 MiB; preserve it and select another state file")
         before = hashlib.sha256(state.read_bytes()).hexdigest()
-        return run_locked(qemu, monitor, package, directory, handoff, state, before, smoke, timeout)
+        return run_locked(qemu, monitor, package, directory, handoff, state, before, smoke, timeout, pxe)
 
 
-def run_locked(qemu, monitor, package, directory, handoff, state, before, smoke, timeout):
+def run_locked(qemu, monitor, package, directory, handoff, state, before, smoke, timeout, pxe=False):
     record = {"uefi_sha256": UEFI_SHA256, "mm_sha256": MM_SHA256,
               "firmware_modified": False, "setup_visible": False,
               "keyboard_navigation_verified": False, "state_sha256_before": before,
               "state_path": str(state), "monitor_sha256": hashlib.sha256(monitor.read_bytes()).hexdigest()}
-    interactive = not smoke and sys.stdin.isatty()
+    interactive = not (smoke or pxe) and sys.stdin.isatty()
+    marker = None
+    if pxe:
+        tftp = local_path(directory / "tftp")
+        tftp.mkdir()
+        token = secrets.token_hex(16)
+        # Only this original application is exposed through TFTP. Logs, state,
+        # vendor images and compiler outputs stay outside the served directory.
+        payload = build_probe(directory, token)
+        shutil.copyfile(payload, local_path(tftp / payload.name))
+        marker = ("SPARK_PXE_EXECUTED:" + token).encode("ascii")
+        record["pxe_execution_verified"] = False
+        record["pxe_probe_sha256"] = hashlib.sha256(payload.read_bytes()).hexdigest()
     capture = bytearray()
     process = None
     partial = local_path(state.with_suffix(state.suffix + ".partial"))
@@ -113,8 +127,15 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, smoke,
                    "gic-version=3,virtualization=on,secure=on", "-accel", "tcg",
                    "-cpu", "max,sve=off,sme=off,pauth=off", "-m", "2G", "-smp", "1",
                    "-nodefaults", "-display", "none", "-monitor", "none", "-serial", "stdio",
-                   "-nic", "none", "-qmp", f"unix:{temporary}/qmp,server=on,wait=off",
+                   "-qmp", f"unix:{temporary}/qmp,server=on,wait=off",
                    "-d", "guest_errors,unimp", "-D", str(local_path(directory / "qemu.log"))]
+        if pxe:
+            command += ["-netdev", f"user,id=pxe,restrict=on,tftp={tftp},bootfile={payload.name}",
+                        "-device", "spark-rtl8168,netdev=pxe,addr=1,mac=52:54:00:12:34:56",
+                        "-object", "filter-dump,id=pxe-capture,netdev=pxe,file=" +
+                        str(local_path(directory / "packets.pcap"))]
+        else:
+            command += ["-nic", "none"]
         for image, address, cpu in ((monitor, 0x80020000, True), (package, 0x93a40000, False),
                                     (DIRECTORY / "uefi.fd", 0x80800000, False),
                                     (handoff, 0x80010000, False), (state, 0xa0000000, False)):
@@ -138,7 +159,8 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, smoke,
                 while process.poll() is None:
                     now = time.monotonic()
                     if now >= deadline and not (interactive and record["setup_visible"]):
-                        raise TimeoutError("setup/navigation not reached before the boot timeout")
+                        target = "PXE download/execution" if pxe else "setup/navigation"
+                        raise TimeoutError(f"{target} not reached before the boot timeout")
                     if stop_at is not None and now >= stop_at:
                         break
                     if navigate_at is not None and now >= navigate_at:
@@ -159,12 +181,12 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, smoke,
                         log.write(data)
                         log.flush()
                         capture += data
-                        if not smoke:
+                        if not (smoke or pxe):
                             sys.stdout.write(data.decode("cp437"))
                             sys.stdout.flush()
                         if b"Synchronous Exception" in capture or b"MON: abort" in capture:
                             raise RuntimeError("firmware exception; see this run's local serial.log")
-                        if not escape_sent and b"Press <DEL>" in capture:
+                        if not pxe and not escape_sent and b"Press <DEL>" in capture:
                             process.stdin.write(b"\x1b")
                             escape_sent = True
                         if not record["setup_visible"] and b"Aptio Setup - AMI" in capture:
@@ -176,9 +198,15 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, smoke,
                                 b"Power On Behavior" in capture[navigation_offset:]):
                             record["keyboard_navigation_verified"] = True
                             stop_at = now + 2
+                        if pxe and not record["pxe_execution_verified"] and marker in capture:
+                            record["pxe_execution_verified"] = True
+                            stop_at = now + .5
             if process.poll() is not None:
                 raise RuntimeError("QEMU exited unexpectedly; see serial.log")
             qmp.request("stop")
+            if pxe:
+                record["pxe_network"] = verify_capture(
+                    local_path(directory / "packets.pcap").read_bytes(), payload.read_bytes())
             snapshot = local_path(directory / "dxe-memory.bin")
             qmp.request("pmemsave", {"val": 0x84000000, "size": 0x4000000,
                                      "filename": str(snapshot)})
@@ -192,7 +220,8 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, smoke,
             partial.chmod(0o600)
             partial.replace(state)
             record["state_sha256_after"] = hashlib.sha256(state.read_bytes()).hexdigest()
-            record["result"] = "setup-and-keyboard-verified" if smoke else "interactive-session-ended"
+            record["result"] = ("pxe-download-and-execution-verified" if pxe else
+                                "setup-and-keyboard-verified" if smoke else "interactive-session-ended")
         except BaseException as error:
             record["error"] = str(error)
             raise
@@ -214,15 +243,18 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, smoke,
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qemu", default=str(ROOT / "build/qemu-spark/qemu-system-aarch64"))
-    parser.add_argument("--smoke-test", action="store_true", help="verify setup and keyboard navigation, then save and stop")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--smoke-test", action="store_true", help="verify setup and keyboard navigation, then save and stop")
+    mode.add_argument("--pxe-test", action="store_true", help="verify native IPv4 PXE, exact TFTP download and EFI execution")
     parser.add_argument("--timeout", type=int, default=45, help="boot deadline in seconds")
     parser.add_argument("--state-file", type=Path, default=ROOT / "firmware/state/spark-nor.bin")
     args = parser.parse_args()
     if not 5 <= args.timeout <= 300:
         parser.error("timeout must be between 5 and 300 seconds")
     try:
-        directory = run(args.qemu, args.smoke_test, args.timeout, args.state_file)
-        print(f"\nSpark UEFI session verified. Local logs: {directory}")
+        directory = run(args.qemu, args.smoke_test, args.timeout, args.state_file, args.pxe_test)
+        result = "Spark PXE download and EFI execution verified" if args.pxe_test else "Spark UEFI session verified"
+        print(f"\n{result}. Local logs: {directory}")
     except (OSError, ValueError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

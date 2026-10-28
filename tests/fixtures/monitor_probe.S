@@ -23,6 +23,66 @@ secure_request:
     mov x0, #0xdef
     msr tpidr_el1, x0
     movi v0.2d, #0
+    /* Network DEPEX needs real SMCCC TRNG. Check discovery and bounds. */
+    ldr x0, =0x84000050
+    smc #0
+    cmp x0, #0x10, lsl #12
+    b.ne fail
+    ldr x0, =0x84000051
+    ldr x1, =0xc4000053
+    smc #0
+    cbnz x0, fail
+    ldr x0, =0x84000051
+    mov x1, #0x1234
+    smc #0
+    cmn x0, #1
+    b.ne fail
+    ldr x0, =0xc4000053
+    mov x1, #193
+    smc #0
+    cmn x0, #2
+    b.ne fail
+    orr x5, x1, x2
+    orr x5, x5, x3
+    cbnz x5, fail
+    ldr x0, =0x84000053
+    mov x1, #0
+    smc #0
+    cmn x0, #2
+    b.ne fail
+    ldr x0, =0x84000053
+    mov x1, #97
+    smc #0
+    cmn x0, #2
+    b.ne fail
+    /* 33 bits: x3 low 32, x2 low 1, x1 unused; no garbage upper bits. */
+    ldr x0, =0x84000053
+    mov x1, #33
+    smc #0
+    cbnz x0, fail
+    cbnz x1, fail
+    lsr x5, x2, #1
+    cbnz x5, fail
+    lsr x5, x3, #32
+    cbnz x5, fail
+    /* Full-width outputs must not repeat across independent requests. */
+    ldr x0, =0xc4000053
+    mov x1, #192
+    smc #0
+    cbnz x0, fail
+    mov x20, x1
+    mov x21, x2
+    mov x22, x3
+    ldr x0, =0xc4000053
+    mov x1, #192
+    smc #0
+    cbnz x0, fail
+    eor x1, x1, x20
+    eor x2, x2, x21
+    eor x3, x3, x22
+    orr x1, x1, x2
+    orr x1, x1, x3
+    cbz x1, fail
     /* An overflowing map must fail before dereferencing either pointer. */
     ldr x0, =0xc4000066
     mov x1, #-4096

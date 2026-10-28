@@ -63,7 +63,23 @@
  
      qdev_prop_set_chr(dev, "chardev", chr);
      sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-@@ -2526,6 +2543,319 @@
+@@ -2198,6 +2215,15 @@
+                                     high_mmio_alias);
+     }
+ 
++    if (vms->spark_fw_lab) {
++        MemoryRegion *spark_pci_mmio = g_new0(MemoryRegion, 1);
++        /* Spark assigns PCI BARs below its 0x80000000 DRAM start. */
++        memory_region_init_alias(spark_pci_mmio, OBJECT(dev), "spark-pci-mmio",
++                                 mmio_reg, 0x40000000, 0x40000000);
++        memory_region_add_subregion_overlap(get_system_memory(), 0x40000000,
++                                            spark_pci_mmio, 1);
++    }
++
+     /* Map IO port space */
+     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, base_pio);
+ 
+@@ -2526,6 +2552,343 @@
      }
  }
  
@@ -352,10 +368,29 @@
 +    VirtMachineState *vms = opaque;
 +    unsigned segment = addr >> 28;
 +    hwaddr offset = addr & 0xfffffff;
++    /* Minimal lab bridge: segment 0, bus 1, slot 0 -> GPEX slot 1.
++     * Conventional NIC configuration is 256 bytes; extended accesses must
++     * not spill into another GPEX devfn through pci_data_read/write.
++     */
++    if (segment == 0 && vms->bus && offset >= 0x100000 &&
++        offset + size <= 0x100100) {
++        return pci_data_read(vms->bus, 8 * 256 + (offset & 255), size);
++    }
 +    if (offset + size > 4096) {
 +        return UINT64_MAX;
 +    }
-+    return spark_pcie_config_read(vms->spark_root_config[segment], offset, size);
++    uint64_t value = spark_pcie_config_read(vms->spark_root_config[segment],
++                                            offset, size);
++    if (segment == 0 && vms->bus && pci_find_device(vms->bus, 0, 8)) {
++        for (unsigned i = 0; i < size; i++) {
++            if (offset + i == 0x52 || offset + i == 0x53) {
++                unsigned byte = offset + i == 0x52 ? 0x11 : 0x20;
++                value = (value & ~(0xffULL << (i * 8))) |
++                        ((uint64_t)byte << (i * 8));
++            }
++        }
++    }
++    return value;
 +}
 +
 +static void spark_ecam_write(void *opaque, hwaddr addr, uint64_t value,
@@ -364,6 +399,11 @@
 +    VirtMachineState *vms = opaque;
 +    unsigned segment = addr >> 28;
 +    hwaddr offset = addr & 0xfffffff;
++    if (segment == 0 && vms->bus && offset >= 0x100000 &&
++        offset + size <= 0x100100) {
++        pci_data_write(vms->bus, 8 * 256 + (offset & 255), value, size);
++        return;
++    }
 +    if (offset + size > 4096 || offset < 4 ||
 +        (offset >= 8 && offset < 0x10) ||
 +        (offset >= 0x10 && offset < 0x18) ||
@@ -383,7 +423,7 @@
  static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
  {
      MachineState *ms = MACHINE(vms);
-@@ -2536,6 +2866,146 @@
+@@ -2536,6 +2899,146 @@
  
      for (i = 0; i < ARRAY_SIZE(base_memmap); i++) {
          vms->memmap[i] = base_memmap[i];
@@ -530,7 +570,7 @@
      }
  
      if (ms->ram_slots > ACPI_MAX_RAM_SLOTS) {
-@@ -2942,6 +3412,21 @@
+@@ -2942,6 +3445,21 @@
  
      firmware_loaded = virt_firmware_init(vms, sysmem,
                                           secure_sysmem ?: sysmem);
@@ -552,7 +592,7 @@
  
      /* If we have an EL3 boot ROM then the assumption is that it will
       * implement PSCI itself, so disable QEMU's internal implementation
-@@ -3262,6 +3747,26 @@
+@@ -3262,6 +3780,26 @@
  
      vms->machine_done.notify = virt_machine_done;
      qemu_add_machine_init_done_notifier(&vms->machine_done);
@@ -579,7 +619,7 @@
  }
  
  static bool virt_get_secure(Object *obj, Error **errp)
-@@ -4213,6 +4718,15 @@
+@@ -4213,6 +4751,15 @@
          NULL, NULL);
      object_class_property_set_description(oc, "acpi",
          "Enable ACPI");
@@ -645,3 +685,383 @@
      bool highmem;
      bool highmem_compact;
      bool highmem_cxl;
+--- a/hw/net/meson.build
++++ b/hw/net/meson.build
+@@ -12,7 +12,7 @@
+ system_ss.add(when: 'CONFIG_E1000E_PCI_EXPRESS', if_true: files('e1000e.c', 'e1000e_core.c', 'e1000x_common.c'))
+ system_ss.add(when: 'CONFIG_IGB_PCI_EXPRESS', if_true: files('net_tx_pkt.c', 'net_rx_pkt.c'))
+ system_ss.add(when: 'CONFIG_IGB_PCI_EXPRESS', if_true: files('igb.c', 'igbvf.c', 'igb_core.c'))
+-system_ss.add(when: 'CONFIG_RTL8139_PCI', if_true: files('rtl8139.c'))
++system_ss.add(when: 'CONFIG_RTL8139_PCI', if_true: files('rtl8139.c', 'spark-rtl8168.c'))
+ system_ss.add(when: 'CONFIG_TULIP', if_true: files('tulip.c'))
+ system_ss.add(when: 'CONFIG_VMXNET3_PCI', if_true: files('net_tx_pkt.c', 'net_rx_pkt.c'))
+ system_ss.add(when: 'CONFIG_VMXNET3_PCI', if_true: files('vmxnet3.c'))
+diff --git a/hw/net/spark-rtl8168.c b/hw/net/spark-rtl8168.c
+new file mode 100644
+--- /dev/null
++++ b/hw/net/spark-rtl8168.c
+@@ -0,0 +1,364 @@
++/*
++ * RTL8168C compatibility NIC for the Spark firmware lab.
++ * Copyright (c) 2026 DGX Spark firmware emulation lab contributors
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ *
++ * Original implementation using public Linux r8169 register/descriptor facts.
++ * Models the polled, single-buffer, non-offloaded path used by Spark UNDI.
++ * Not a complete Realtek chip, PHY, PCIe fabric, or physical Spark NIC model.
++ */
++#include "qemu/osdep.h"
++#include "qapi/error.h"
++#include "hw/pci/pci_device.h"
++#include "hw/core/qdev-properties.h"
++#include "migration/vmstate.h"
++#include "net/net.h"
++#include "qemu/module.h"
++#include "qemu/log.h"
++#include "qemu/bswap.h"
++
++#define TYPE_SPARK_RTL8168 "spark-rtl8168"
++OBJECT_DECLARE_SIMPLE_TYPE(SparkRtl8168, SPARK_RTL8168)
++
++#define DESC_OWN (1U << 31)
++#define DESC_EOR (1U << 30)
++#define DESC_FS (1U << 29)
++#define DESC_LS (1U << 28)
++#define RTL_XID 0x3c000000 /* RTL8168C, Linux MAC_VER_19 */
++#define MAX_FRAME 9018
++#define MAX_DESCRIPTORS 1024
++
++struct SparkRtl8168 {
++    PCIDevice parent;
++    MemoryRegion registers, io, mmio;
++    NICConf conf;
++    NICState *nic;
++    uint8_t regs[256];
++    uint16_t phy[32], ephy[32], ocp[32768];
++    uint8_t eri[4][4096], csi[4096];
++    unsigned tx_index, rx_index;
++};
++
++static void rtl_irq_update(SparkRtl8168 *s)
++{
++    pci_set_irq(PCI_DEVICE(s),
++                !!(lduw_le_p(s->regs + 0x3c) & lduw_le_p(s->regs + 0x3e)));
++}
++
++static void rtl_status(SparkRtl8168 *s, uint16_t bits)
++{
++    stw_le_p(s->regs + 0x3e, lduw_le_p(s->regs + 0x3e) | bits);
++    rtl_irq_update(s);
++}
++
++static bool rtl_can_receive(NetClientState *nc)
++{
++    SparkRtl8168 *s = qemu_get_nic_opaque(nc);
++    return (s->regs[0x37] & 8) &&
++           (pci_get_word(PCI_DEVICE(s)->config + PCI_COMMAND) & PCI_COMMAND_MASTER);
++}
++
++static bool rtl_accept(SparkRtl8168 *s, const uint8_t *packet)
++{
++    static const uint8_t broadcast[6] = {255, 255, 255, 255, 255, 255};
++    uint8_t mode = s->regs[0x44];
++    if (mode & 1) {
++        return true;
++    }
++    if (!memcmp(packet, broadcast, 6)) {
++        return mode & 8;
++    }
++    if (packet[0] & 1) {
++        unsigned bit = net_crc32(packet, 6) >> 26;
++        return (mode & 4) && (s->regs[8 + bit / 8] & (1U << (bit % 8)));
++    }
++    return (mode & 2) && !memcmp(packet, s->regs, 6);
++}
++
++static ssize_t rtl_receive(NetClientState *nc, const uint8_t *buf, size_t len)
++{
++    SparkRtl8168 *s = qemu_get_nic_opaque(nc);
++    PCIDevice *dev = PCI_DEVICE(s);
++    uint8_t desc[16], packet[MAX_FRAME + 4];
++    uint64_t ring = ldq_le_p(s->regs + 0xe4), address;
++    uint32_t flags, capacity;
++    size_t length;
++
++    if (!rtl_can_receive(nc) || len < 14 || len > MAX_FRAME || !rtl_accept(s, buf)) {
++        return len;
++    }
++    if (!ring || pci_dma_read(dev, ring + s->rx_index * 16, desc, 16) != MEMTX_OK) {
++        rtl_status(s, 0x8000);
++        return len;
++    }
++    flags = ldl_le_p(desc);
++    capacity = flags & 0x3fff;
++    if (!(flags & DESC_OWN)) {
++        rtl_status(s, 0x10);
++        return len;
++    }
++    length = MAX(len, 60) + 4;
++    if (capacity < length) {
++        rtl_status(s, 2);
++        return len;
++    }
++    address = ldq_le_p(desc + 8);
++    memset(packet, 0, length);
++    memcpy(packet, buf, len);
++    stl_le_p(packet + length - 4, ~net_crc32_le(packet, length - 4));
++    if (pci_dma_write(dev, address, packet, length) != MEMTX_OK) {
++        rtl_status(s, 0x8000);
++        return len;
++    }
++    stl_le_p(desc, (flags & DESC_EOR) | DESC_FS | DESC_LS | length);
++    stl_le_p(desc + 4, 0);
++    if (pci_dma_write(dev, ring + s->rx_index * 16, desc, 8) != MEMTX_OK) {
++        rtl_status(s, 0x8000);
++        return len;
++    }
++    s->rx_index = flags & DESC_EOR ? 0 : (s->rx_index + 1) % MAX_DESCRIPTORS;
++    rtl_status(s, 1);
++    return len;
++}
++
++static void rtl_transmit(SparkRtl8168 *s)
++{
++    PCIDevice *dev = PCI_DEVICE(s);
++    uint64_t ring = ldq_le_p(s->regs + 0x20);
++
++    if (!(s->regs[0x37] & 4) ||
++        !(pci_get_word(dev->config + PCI_COMMAND) & PCI_COMMAND_MASTER) || !ring) {
++        return;
++    }
++    for (unsigned n = 0; n < MAX_DESCRIPTORS; n++) {
++        uint8_t desc[16], packet[MAX_FRAME];
++        uint32_t flags, len;
++        if (pci_dma_read(dev, ring + s->tx_index * 16, desc, 16) != MEMTX_OK) {
++            rtl_status(s, 0x8000);
++            return;
++        }
++        flags = ldl_le_p(desc);
++        len = flags & 0xffff;
++        if (!(flags & DESC_OWN)) {
++            break;
++        }
++        /* Unsupported fragment/offload requests fail rather than claim success. */
++        if (!len || len > sizeof(packet) ||
++            (flags & (DESC_FS | DESC_LS)) != (DESC_FS | DESC_LS) ||
++            (flags & 0x0fff0000) || ldl_le_p(desc + 4) ||
++            pci_dma_read(dev, ldq_le_p(desc + 8), packet, len) != MEMTX_OK) {
++            rtl_status(s, 8);
++            return;
++        }
++        qemu_send_packet(qemu_get_queue(s->nic), packet, len);
++        stl_le_p(desc, flags & ~DESC_OWN);
++        if (pci_dma_write(dev, ring + s->tx_index * 16, desc, 4) != MEMTX_OK) {
++            rtl_status(s, 0x8000);
++            return;
++        }
++        s->tx_index = flags & DESC_EOR ? 0 : (s->tx_index + 1) % MAX_DESCRIPTORS;
++        rtl_status(s, 4);
++    }
++}
++
++static uint64_t rtl_read(void *opaque, hwaddr addr, unsigned size)
++{
++    SparkRtl8168 *s = opaque;
++    uint64_t value = 0;
++    if (addr == 0x6c && size == 1) {
++        return qemu_get_queue(s->nic)->link_down ? 0 : 0x13; /* 1G, full duplex */
++    }
++    for (unsigned i = 0; i < size; i++) {
++        value |= (uint64_t)s->regs[addr + i] << (8 * i);
++    }
++    return value;
++}
++
++static void rtl_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
++{
++    SparkRtl8168 *s = opaque;
++    if (addr == 0x3e && size == 2) {
++        stw_le_p(s->regs + 0x3e, lduw_le_p(s->regs + 0x3e) & ~value);
++        rtl_irq_update(s);
++        return;
++    }
++    if (addr == 0x37 && (value & 0x10)) {
++        s->tx_index = s->rx_index = 0;
++        value = 0;
++    }
++    if (addr == 0x40 && size == 4) {
++        value = (value & ~0x7cf00000UL) | RTL_XID;
++    }
++    if (addr == 0x60 && size == 4) {
++        unsigned reg = (value >> 16) & 31;
++        if (value & (1UL << 31)) {
++            s->phy[reg] = value;
++            if (!reg) {
++                s->phy[reg] &= ~0x8200; /* reset/autoneg restart complete */
++            }
++            value &= ~(1UL << 31);
++        } else {
++            value = (1UL << 31) | s->phy[reg];
++        }
++    }
++    /* CSI is an indirect view of PCI configuration, not a canned ACK. */
++    if (addr == 0x68 && size == 4) {
++        unsigned offset = value & 0xffc;
++        PCIDevice *dev = PCI_DEVICE(s);
++        if (value & (1UL << 31)) {
++            uint32_t data = ldl_le_p(s->regs + 0x64);
++            for (unsigned i = 0; i < 4; i++) {
++                if (value & (1UL << (12 + i))) {
++                    if (offset + i < 256) {
++                        pci_default_write_config(dev, offset + i,
++                                                 (data >> (8 * i)) & 255, 1);
++                    } else {
++                        s->csi[offset + i] = data >> (8 * i);
++                    }
++                }
++            }
++            value &= ~(1UL << 31);
++        } else {
++            stl_le_p(s->regs + 0x64, offset < 256
++                                         ? pci_default_read_config(dev, offset, 4)
++                                         : ldl_le_p(s->csi + offset));
++            value |= 1UL << 31;
++        }
++    }
++    if (addr == 0x74 && size == 4) {
++        unsigned offset = value & 0xffc, type = (value >> 16) & 3;
++        if (value & (1UL << 31)) {
++            uint32_t data = ldl_le_p(s->regs + 0x70);
++            for (unsigned i = 0; i < 4; i++) {
++                if (value & (1UL << (12 + i))) {
++                    s->eri[type][offset + i] = data >> (8 * i);
++                }
++            }
++            value &= ~(1UL << 31);
++        } else {
++            stl_le_p(s->regs + 0x70, ldl_le_p(s->eri[type] + offset));
++            value |= 1UL << 31;
++        }
++    }
++    if (addr == 0x80 && size == 4) {
++        unsigned reg = (value >> 16) & 31;
++        if (value & (1UL << 31)) {
++            s->ephy[reg] = value;
++            value &= ~(1UL << 31);
++        } else {
++            value = (1UL << 31) | s->ephy[reg];
++        }
++    }
++    if (addr == 0xb0 && size == 4) {
++        unsigned reg = (value >> 16) & 0x7fff;
++        if (value & (1UL << 31)) {
++            s->ocp[reg] = value;
++        } else {
++            value = (value & 0xffff0000) | s->ocp[reg];
++        }
++    }
++    if (addr == 0xdc && size == 4) {
++        value |= 0x800000ff; /* unprogrammed efuse byte */
++    }
++    for (unsigned i = 0; i < size; i++) {
++        s->regs[addr + i] = value >> (8 * i);
++    }
++    if (addr == 0x38) {
++        rtl_transmit(s);
++        s->regs[0x38] = 0;
++    }
++    if (addr == 0x37) {
++        qemu_flush_queued_packets(qemu_get_queue(s->nic));
++    }
++    rtl_irq_update(s);
++}
++
++static const MemoryRegionOps rtl_ops = {
++    .read = rtl_read,
++    .write = rtl_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 1,
++    .valid.max_access_size = 4,
++    .impl.min_access_size = 1,
++    .impl.max_access_size = 4,
++};
++static NetClientInfo rtl_net_info = {
++    .type = NET_CLIENT_DRIVER_NIC,
++    .size = sizeof(NICState),
++    .can_receive = rtl_can_receive,
++    .receive = rtl_receive,
++};
++
++static void rtl_reset(DeviceState *dev)
++{
++    SparkRtl8168 *s = SPARK_RTL8168(dev);
++    memset(s->regs, 0, sizeof(s->regs));
++    memset(s->phy, 0, sizeof(s->phy));
++    memset(s->ephy, 0, sizeof(s->ephy));
++    memset(s->ocp, 0, sizeof(s->ocp));
++    memset(s->eri, 0, sizeof(s->eri));
++    memset(s->csi, 0, sizeof(s->csi));
++    memcpy(s->regs, s->conf.macaddr.a, 6);
++    stl_le_p(s->regs + 0x40, RTL_XID);
++    s->phy[0] = 0x1140;
++    s->phy[1] = 0x796d;
++    s->phy[2] = 0x1c;
++    s->phy[3] = 0xc912;
++    s->phy[4] = 0x1e1;
++    s->phy[5] = 0xc5e1;
++    s->phy[9] = 0x300;
++    s->phy[10] = 0x3800;
++    s->tx_index = s->rx_index = 0;
++    rtl_irq_update(s);
++}
++
++static void rtl_realize(PCIDevice *dev, Error **errp)
++{
++    SparkRtl8168 *s = SPARK_RTL8168(dev);
++    memory_region_init_io(&s->registers, OBJECT(s), &rtl_ops, s, TYPE_SPARK_RTL8168,
++                          256);
++    memory_region_init_alias(&s->io, OBJECT(s), "spark-rtl8168-io", &s->registers, 0,
++                             256);
++    pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_IO, &s->io);
++    memory_region_init_alias(&s->mmio, OBJECT(s), "spark-rtl8168-mmio", &s->registers,
++                             0, 256);
++    pci_register_bar(
++        dev, 2, PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_TYPE_64, &s->mmio);
++    dev->config[PCI_INTERRUPT_PIN] = 1;
++    qemu_macaddr_default_if_unset(&s->conf.macaddr);
++    s->nic = qemu_new_nic(&rtl_net_info, &s->conf, object_get_typename(OBJECT(dev)),
++                          dev->qdev.id, &dev->qdev.mem_reentrancy_guard, s);
++    qemu_format_nic_info_str(qemu_get_queue(s->nic), s->conf.macaddr.a);
++    rtl_reset(DEVICE(dev));
++}
++
++static void rtl_uninit(PCIDevice *dev) { qemu_del_nic(SPARK_RTL8168(dev)->nic); }
++
++static const Property rtl_properties[] = {DEFINE_NIC_PROPERTIES(SparkRtl8168, conf)};
++static const VMStateDescription rtl_vmstate = {
++    .name = TYPE_SPARK_RTL8168,
++    .unmigratable = true,
++};
++static void rtl_class_init(ObjectClass *klass, const void *data)
++{
++    PCIDeviceClass *pc = PCI_DEVICE_CLASS(klass);
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    pc->realize = rtl_realize;
++    pc->exit = rtl_uninit;
++    pc->vendor_id = 0x10ec;
++    pc->device_id = 0x8168;
++    pc->revision = 3;
++    pc->class_id = PCI_CLASS_NETWORK_ETHERNET;
++    dc->vmsd = &rtl_vmstate;
++    device_class_set_props(dc, rtl_properties);
++    device_class_set_legacy_reset(dc, rtl_reset);
++}
++static const TypeInfo rtl_type = {
++    .name = TYPE_SPARK_RTL8168,
++    .parent = TYPE_PCI_DEVICE,
++    .instance_size = sizeof(SparkRtl8168),
++    .class_init = rtl_class_init,
++    .interfaces = (const InterfaceInfo[]){{INTERFACE_CONVENTIONAL_PCI_DEVICE}, {}},
++};
++static void rtl_register_types(void) { type_register_static(&rtl_type); }
++type_init(rtl_register_types);

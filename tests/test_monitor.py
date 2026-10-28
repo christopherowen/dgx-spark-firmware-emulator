@@ -13,7 +13,7 @@ from tools.build_monitor import ROOT, build_monitor, find_tool
 
 @unittest.skipUnless(os.environ.get("SPARK_QEMU"), "set SPARK_QEMU for monitor integration")
 class MonitorIntegrationTests(unittest.TestCase):
-    def test_world_switch_fp_tls_discovery_bounds_and_timer_ppi(self):
+    def test_world_switch_fp_tls_trng_discovery_bounds_and_timer_ppi(self):
         monitor = build_monitor()
         with tempfile.TemporaryDirectory(dir=ROOT / "build", prefix="monitor-test-") as temporary:
             directory = Path(temporary)

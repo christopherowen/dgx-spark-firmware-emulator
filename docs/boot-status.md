@@ -2,8 +2,9 @@
 
 Verified locally on 2026-10-28 with QEMU 11.1.2 TCG and one AArch64 CPU:
 **the real Spark UEFI boots through BDS to interactive AMI setup.** Keyboard
-navigation from Main to Advanced works. A second cold boot reuses the saved
-variable store and passes the same checks.
+navigation from Main to Advanced works. Native IPv4 PXE obtains a DHCP lease,
+downloads an original EFI application and executes it. A second cold boot
+reuses the saved variable store and passes the same checks.
 
 ## Inputs and execution
 
@@ -40,7 +41,9 @@ capsule PKCS#7 trust chain or establish authenticated boot.
 | AMI setup | Interactive Main screen, real clock advancing |
 | Keyboard input | Right-arrow opens Advanced and its settings list |
 | Subsequent cold boot | Existing NOR state loaded; setup, navigation and all protocols verified again |
-| GPU, NIC or operating system | Not part of this result |
+| Native IPv4 PXE | Bundled Realtek UNDI/SNP/DHCP/PXE drivers obtain a lease and download an EFI program over TFTP |
+| Downloaded EFI execution | Original probe prints a fresh per-run token; complete acknowledged transfer matches the probe bytes |
+| GPU, physical NIC firmware or operating system | Not part of this result |
 
 The 13 protocols are Security, Cpu, Metronome, Timer, Bds, WatchdogTimer,
 Runtime, Variable, VariableWrite, Capsule, MonotonicCounter, Reset and
@@ -53,6 +56,7 @@ accepted as a full-boot result.
 python3 tools/build_qemu.py
 python3 tools/boot_spark.py --smoke-test
 python3 tools/boot_spark.py --smoke-test
+python3 tools/boot_spark.py --pxe-test --state-file firmware/state/pxe-nor.bin
 python3 tools/boot_spark.py
 ```
 
@@ -68,16 +72,42 @@ The record links each run's input/output NOR hashes, allowing persistence to
 be checked without publishing any generated variable-store contents. Failed
 runs preserve the previous NOR file. Concurrent runs cannot share one store.
 
+## PXE evidence
+
+The PXE test does not enter setup. Its optional RTL8168C compatibility NIC is
+attached through the lab PCI bridge. SMCCC TRNG supplies host-backed entropy
+to the real RngDxe; EFI RNG is a dependency of the firmware's network drivers.
+No additional EFI network driver, iPXE or injected network protocol is used.
+The monitor loads only UEFI/MM; the probe enters guest memory through the
+native firmware's network download and EFI loader.
+
+The verified default-settings run used client `10.0.2.15`, server `10.0.2.2`,
+and a 2,048-byte original probe transferred in two TFTP data blocks, with a
+negotiated block size of 1,468 bytes. The runner checks DHCP DORA for the NIC's
+MAC and transaction ID, reconstructs the exact payload from acknowledged TFTP
+blocks, and requires its fresh execution token. Each run uses a newly built
+probe and records its hash and transfer results in `run.json`. Both a fresh
+NOR store and a subsequent cold boot are supported.
+
+QEMU libslirp provides a restricted local test network. Its dedicated TFTP
+directory contains only the generated original probe; vendor images, state,
+objects and logs are never served. The PCAP remains in the ignored run folder.
+This establishes IPv4 PXE and EFI application execution. IPv6 PXE, HTTP boot,
+Secure Boot image acceptance, OS boot and the physical NIC's embedded firmware
+have not been verified.
+
 ## Model boundaries
 
 The [QEMU profile](../qemu/README.md) provides functional GIC/timers/UART and
 QEMU xHCI cores, plus bounded configuration models for GPIO, EINT, USB PHY,
 PCIe and board information. The original [monitor](../monitor/README.md)
-implements only the observed FF-A compatibility subset and flash/clock peers.
+implements the observed FF-A compatibility subset, flash/clock peers and
+host-backed SMCCC TRNG.
 Root of Trust requests receive explicit nonzero errors; no attestation or
 security/logging service is reported as successful.
 
-PCIe roots have no downstream devices. USB PHY register readback and clock
+Only the optional compatibility NIC is connected through the minimal PCIe
+bridge; most roots remain empty. USB PHY register readback and clock
 status approximate initialization, without electrical behavior. Loader-cached
 board/version data and most fuse fields use synthetic defaults. Setup's
 SMBIOS total-memory field currently shows 0 GB even though UEFI runs in QEMU
