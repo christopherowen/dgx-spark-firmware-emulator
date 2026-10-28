@@ -33,7 +33,9 @@ Use `python3 tools/spark_fw.py inspect PATH` to generate outer-header metadata.
 It does not inspect nested payloads or verify signatures. Unknown data is left
 unknown; do not infer boot addresses or an instruction set from a filename.
 
-Raw hardware captures belong in ignored `captures/`. Before sharing derived
+`tools/collect_hardware.py` keeps raw hardware captures and acquisition metadata
+in ignored `firmware/hardware/`. Runtime DXE memory snapshots also contain
+vendor-derived bytes and stay under ignored `firmware/runs/`. Before sharing derived
 evidence, review it for serial numbers, MAC addresses, device identity,
 credentials, and redistribution rights. Never assume that a downloadable
 firmware image is licensed for inclusion in a public repository.

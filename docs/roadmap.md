@@ -22,8 +22,11 @@ not committed.
 - [x] Record the Founders Edition component, revision, upstream URL, and SHA-256.
 - [x] Identify containers, compression, authentication wrapper, and UEFI executable boundaries.
 - [x] Establish the UEFI test-entry ISA/load/entry/EL2 contract; physical boot-ROM handoff remains unverified.
-- [ ] Collect a matching read-only hardware inventory: ACPI tables, resource
+- [x] Collect a read-only hardware inventory: ACPI tables, resource
       addresses, IRQ assignments, firmware component GUIDs, and boot log.
+
+The captured machine runs SoC 2.155.11; the pinned emulator image is 2.158.15.
+Cross-check address facts against both; this is not an exact-version capture.
 
 Acceptance: an evidence-backed load contract for one selected component.
 An update capsule alone is not sufficient; its payload may require extraction,
@@ -41,8 +44,9 @@ relocation, dependencies, and a boot context.
 Acceptance: repeatable execution of the selected real component to a known
 checkpoint, with unsupported behavior visible rather than silently ignored.
 
-Implemented: SEC/DXE entry and serial checkpoint `61`. The later `SaveApplLog`
-access at `0x180100c0` blocks full boot. See [boot status](boot-status.md).
+Implemented: SEC/DXE entry and serial checkpoint `61`. The opt-in Root of Trust
+error-reply scenario continues to `D3`/`90`, then faults with six required
+architectural protocols absent. See [boot status](boot-status.md).
 
 ## 3. MT8901-related interfaces and controller execution
 
@@ -50,7 +54,8 @@ access at `0x180100c0` blocks full boot. See [boot status](boot-status.md).
 - [ ] Model mailbox ownership, doorbells, responses, and interrupt delivery.
 - [ ] Separate protocol stubs from actual remote firmware execution.
 - [ ] Identify the remote core and image; choose QEMU or Renode from evidence.
-- [ ] Add independent subsystem regression scenarios.
+- [x] Add independent subsystem regression scenarios for GPIO, UART IRQ,
+      EINT software IRQs, and Root of Trust failure replies.
 
 Acceptance: recorded request/response scenarios match observed hardware, and
 any claim of controller firmware execution includes a real instruction trace.

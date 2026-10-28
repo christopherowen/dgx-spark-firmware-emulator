@@ -12,8 +12,17 @@ generic flash and PCI MMIO windows to avoid overlapping those devices.
 It also provides eleven GPIO/pad configuration banks with register readback
 and value/SET/CLEAR aliases, including the early UART mux access. External
 pins, GPIO interrupts, and electrical/clock effects are not modeled.
-Only one CPU and GICv3 are supported by this profile. The UART's interrupt
-routing and generic PCI topology are approximations; no GPU is implemented.
+The UART drives GSI 878, confirmed against physical SPCR and tested in QEMU.
+The GIC exposes interrupts through ID 895 to include this line. Four MT8901
+EINT banks implement configuration readback, SET/CLEAR masks, software pending
+and acknowledgement, and an aggregate parent interrupt at GSI 563. External
+pin signals and debounce timing are not modeled. See the reviewed
+[hardware findings](../docs/hardware-findings.md) and public register references.
+
+Only one CPU and GICv3 are supported by this profile; physical ACPI reports
+GICv4. Generic PCI topology is approximate, and no GPU is implemented. Use TCG
+and a fresh QEMU process per run; reset, migration, and snapshot restoration
+of the added peripheral state are not supported.
 
 Build prerequisites are a C compiler, Python with venv/pip support, Git, tar,
 pkg-config, and the GLib and pixman development libraries. The build tool
@@ -35,7 +44,16 @@ firmware, generated handoff data, and execution traces stay under ignored
 `firmware/`. No vendor payload is included in this patch.
 
 The current continuation reaches serial checkpoint `61`, then faults at an
-unmodeled `0x180100c0` access and returns nonzero. See [boot status](../docs/boot-status.md).
+unmodeled `0x180100c0` access and returns nonzero.
+
+The separate `spark-rot-error-replies=on` property, exposed by the runner's
+`--rot-error-replies` option, models a polled FIFO transport at `0x18010000`
+and `0x18020000`. Every request receives a nonzero service status. It implements
+no security or logging service and executes no Root of Trust firmware. The
+transport is inferred from the UEFI caller, not verified by live register
+transactions. This failure scenario reaches checkpoints `D3` and `90`, then
+reports missing architectural protocols and faults. See
+[boot status](../docs/boot-status.md).
 
 The patch modifies QEMU GPL-2.0-or-later source and is supplied under that
 license, with the original file copyright notices retained. The project's

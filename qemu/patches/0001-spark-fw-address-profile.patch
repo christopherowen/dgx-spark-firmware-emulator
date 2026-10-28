@@ -16,22 +16,43 @@
  #include "hw/core/cpu.h"
  #include "hw/cxl/cxl.h"
  #include "hw/cxl/cxl_host.h"
-@@ -1513,6 +1515,14 @@
+@@ -1419,7 +1421,9 @@
+      * Note that the num-irq property counts both internal and external
+      * interrupts; there are always 32 of the former (mandated by GIC spec).
+      */
+-    qdev_prop_set_uint32(vms->gic, "num-irq", NUM_IRQS + 32);
++    /* Include SPCR UART interrupt 878; QEMU requires a multiple of 32. */
++    qdev_prop_set_uint32(vms->gic, "num-irq",
++                         vms->spark_fw_lab ? 896 : NUM_IRQS + 32);
+     if (!kvm_irqchip_in_kernel() && !hvf_irqchip_in_kernel()) {
+         qdev_prop_set_bit(vms->gic, "has-security-extensions", vms->secure);
+     }
+@@ -1461,6 +1465,9 @@
+         sysbus_mmio_map(gicbusdev, 2, vms->memmap[VIRT_HIGH_GIC_REDIST2].base);
+     }
+ 
++    if (vms->spark_fw_lab) {
++        vms->spark_eint_irq = qdev_get_gpio_in(vms->gic, 563 - 32);
++    }
+     gic_connect_ppis(vms);
+ 
+     fdt_add_gic_node(vms);
+@@ -1512,6 +1519,14 @@
+     DeviceState *dev = qdev_new(TYPE_PL011);
      SysBusDevice *s = SYS_BUS_DEVICE(dev);
      MachineState *ms = MACHINE(vms);
- 
++
 +    if (vms->spark_fw_lab && uart == VIRT_UART0) {
 +        object_unref(OBJECT(dev));
 +        serial_mm_init(mem, 0x16a00000, 2,
-+                       qdev_get_gpio_in(vms->gic, irq), 115200, chr,
++                       qdev_get_gpio_in(vms->gic, 878 - 32), 115200, chr,
 +                       DEVICE_LITTLE_ENDIAN);
 +        return;
 +    }
-+
+ 
      qdev_prop_set_chr(dev, "chardev", chr);
      sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-     memory_region_add_subregion(mem, base,
-@@ -2526,6 +2536,41 @@
+@@ -2526,6 +2541,220 @@
      }
  }
  
@@ -70,10 +91,189 @@
 +    .valid.max_access_size = 4,
 +};
 +
++/*
++ * MT8901 EINT configuration and software pending interrupts. Register offsets
++ * follow NVIDIA NV-Kernels mtk-eint.c; external pin input and debounce timing
++ * are not modeled. The four bank bases and parent GSI 563 come from Spark ACPI.
++ */
++static void spark_eint_update(VirtMachineState *vms)
++{
++    bool pending = false;
++    for (unsigned bank = 0; bank < 4; bank++) {
++        uint32_t *r = vms->spark_eint[bank];
++        for (unsigned port = 0; port < 16; port++) {
++            pending |= !!(r[port] & ~r[0x80 / 4 + port] &
++                          r[0x400 / 4 + port]);
++        }
++    }
++    if (vms->spark_eint_irq) {
++        qemu_set_irq(vms->spark_eint_irq, pending);
++    }
++}
++
++static uint64_t spark_eint_read(void *opaque, hwaddr addr, unsigned size)
++{
++    VirtMachineState *vms = opaque;
++    return vms->spark_eint[addr / 0x1000][(addr & 0xfff) / 4];
++}
++
++static void spark_eint_write(void *opaque, hwaddr addr, uint64_t value,
++                             unsigned size)
++{
++    VirtMachineState *vms = opaque;
++    uint32_t *r = vms->spark_eint[addr / 0x1000];
++    unsigned offset = addr & 0xfff;
++    unsigned port = (offset & 0x3f) / 4;
++    unsigned target;
++    switch (offset & ~0x3f) {
++    case 0x40: /* acknowledge pending bits */
++        r[port] &= ~value;
++        break;
++    case 0x80: case 0x140: case 0x300: case 0x400:
++        r[offset / 4] = value;
++        break;
++    case 0xc0: case 0x180: case 0x340: /* SET aliases */
++        r[(offset - 0x40) / 4] |= value;
++        break;
++    case 0x100: case 0x1c0: case 0x380: /* CLEAR aliases */
++        r[(offset - 0x80) / 4] &= ~value;
++        break;
++    case 0x200: /* software pending, no external inputs */
++        r[offset / 4] = value;
++        r[port] = value;
++        break;
++    case 0x240:
++        r[(offset - 0x40) / 4] |= value;
++        r[port] |= value;
++        break;
++    case 0x280:
++        r[(offset - 0x80) / 4] &= ~value;
++        r[port] &= ~value;
++        break;
++    default:
++        target = (0x500 + (offset & 0xff)) / 4;
++        switch (offset & 0xf00) {
++        case 0x500: /* debounce configuration only, no timing effect */
++            r[target] = value;
++            break;
++        case 0x600:
++            r[target] |= value;
++            break;
++        case 0x700:
++            r[target] &= ~value;
++            break;
++        default:
++            qemu_log_mask(LOG_UNIMP, "spark EINT: unsupported write at 0x%"
++                          HWADDR_PRIx "\n", addr);
++            break;
++        }
++        break;
++    }
++    spark_eint_update(vms);
++}
++
++static const MemoryRegionOps spark_eint_ops = {
++    .read = spark_eint_read,
++    .write = spark_eint_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++/*
++ * Polled transport inferred from the UEFI driver. This opt-in failure scenario
++ * returns a nonzero service status; it does not implement or authenticate ROT
++ * firmware, and must never be presented as a successful security service.
++ */
++static uint64_t spark_rot_read(void *opaque, hwaddr addr, unsigned size)
++{
++    SparkRotMailbox *m = opaque;
++    switch (addr) {
++    case 0x20: /* transmit FIFO ready */
++        return 1;
++    case 0x40: /* receive FIFO */
++        if (m->reply_pending && !m->reply_consumed) {
++            m->reply_consumed = true;
++            return m->reply;
++        }
++        return 0;
++    case 0x50:
++        return m->reply_pending;
++    case 0x70: /* acknowledgement data, unused by the observed driver */
++        return 0;
++    case 0x80:
++        return m->ack_pending;
++    case 0xb0: /* transport error flags */
++        return 0;
++    default:
++        qemu_log_mask(LOG_UNIMP, "spark ROT: unsupported read at 0x%"
++                      HWADDR_PRIx "\n", addr);
++        return 0;
++    }
++}
++
++static void spark_rot_write(void *opaque, hwaddr addr, uint64_t value,
++                            unsigned size)
++{
++    SparkRotMailbox *m = opaque;
++    switch (addr) {
++    case 0x10: /* transmit FIFO */
++        if (m->tx_count < ARRAY_SIZE(m->tx)) {
++            m->tx[m->tx_count++] = value;
++        } else {
++            qemu_log_mask(LOG_GUEST_ERROR, "spark ROT: transmit FIFO overflow\n");
++        }
++        break;
++    case 0x30:
++        if (value == 3) { /* observed transport initialization */
++            m->tx_count = 0;
++            m->reply_pending = m->ack_pending = false;
++            m->reply_consumed = false;
++        } else if (value == 1 && m->tx_count) {
++            /* Echo message ID, zero data words, nonzero service status (1). */
++            m->reply = (m->tx[0] & 0xff) | (1 << 12);
++            m->reply_pending = m->ack_pending = true;
++            m->reply_consumed = false;
++            qemu_log_mask(LOG_UNIMP,
++                          "spark ROT: service 0x%x unavailable; explicit error reply\n",
++                          m->tx[0] & 0xff);
++            m->tx_count = 0;
++        } else {
++            qemu_log_mask(LOG_GUEST_ERROR, "spark ROT: invalid doorbell/FIFO state\n");
++        }
++        break;
++    case 0x60: /* receive status W1C */
++        if (value & 1) {
++            m->reply_pending = false;
++        }
++        break;
++    case 0x90: /* acknowledgement status W1C */
++        if (value & 1) {
++            m->ack_pending = false;
++        }
++        break;
++    case 0xc0: /* observed initialization clears stale indications */
++        m->reply_pending = m->ack_pending = false;
++        break;
++    default:
++        qemu_log_mask(LOG_UNIMP, "spark ROT: unsupported write at 0x%"
++                      HWADDR_PRIx "\n", addr);
++        break;
++    }
++}
++
++static const MemoryRegionOps spark_rot_ops = {
++    .read = spark_rot_read,
++    .write = spark_rot_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
  static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
  {
      MachineState *ms = MACHINE(vms);
-@@ -2536,6 +2581,32 @@
+@@ -2536,6 +2765,57 @@
  
      for (i = 0; i < ARRAY_SIZE(base_memmap); i++) {
          vms->memmap[i] = base_memmap[i];
@@ -93,6 +293,31 @@
 +            memory_region_add_subregion(get_system_memory(), gpio_bases[i],
 +                                       &vms->spark_gpio_mmio[i]);
 +        }
++        static const hwaddr eint_bases[] = {
++            0x12410000, 0x12e00000, 0x12800000, 0x1c54a000,
++        };
++        memory_region_init_io(&vms->spark_eint_mmio, OBJECT(vms),
++                              &spark_eint_ops, vms, "spark-eint", 0x4000);
++        for (unsigned bank = 0; bank < ARRAY_SIZE(eint_bases); bank++) {
++            for (unsigned port = 0; port < 16; port++) {
++                vms->spark_eint[bank][0x80 / 4 + port] = UINT32_MAX;
++            }
++            memory_region_init_alias(&vms->spark_eint_banks[bank], OBJECT(vms),
++                                     "spark-eint-bank", &vms->spark_eint_mmio,
++                                     bank * 0x1000, 0x1000);
++            memory_region_add_subregion(get_system_memory(), eint_bases[bank],
++                                       &vms->spark_eint_banks[bank]);
++        }
++        if (vms->spark_rot_error_replies) {
++            for (unsigned i = 0; i < ARRAY_SIZE(vms->spark_rot); i++) {
++                memory_region_init_io(&vms->spark_rot[i].iomem, OBJECT(vms),
++                                      &spark_rot_ops, &vms->spark_rot[i],
++                                      "spark-rot-error-transport", 0x1000);
++                memory_region_add_subregion(get_system_memory(),
++                                           0x18010000 + i * 0x10000,
++                                           &vms->spark_rot[i].iomem);
++            }
++        }
 +        vms->memmap[VIRT_FLASH].size = 0x04000000;
 +        vms->memmap[VIRT_GIC_DIST].base = 0x06800000;
 +        vms->memmap[VIRT_GIC_REDIST].base = 0x06880000;
@@ -106,7 +331,7 @@
      }
  
      if (ms->ram_slots > ACPI_MAX_RAM_SLOTS) {
-@@ -3262,6 +3333,16 @@
+@@ -3262,6 +3542,26 @@
  
      vms->machine_done.notify = virt_machine_done;
      qemu_add_machine_init_done_notifier(&vms->machine_done);
@@ -120,13 +345,28 @@
 +static void virt_set_spark_fw_lab(Object *obj, bool value, Error **errp)
 +{
 +    VIRT_MACHINE(obj)->spark_fw_lab = value;
++}
++
++static bool virt_get_spark_rot_error_replies(Object *obj, Error **errp)
++{
++    return VIRT_MACHINE(obj)->spark_rot_error_replies;
++}
++
++static void virt_set_spark_rot_error_replies(Object *obj, bool value, Error **errp)
++{
++    VIRT_MACHINE(obj)->spark_rot_error_replies = value;
  }
  
  static bool virt_get_secure(Object *obj, Error **errp)
-@@ -4213,6 +4294,10 @@
+@@ -4213,6 +4513,15 @@
          NULL, NULL);
      object_class_property_set_description(oc, "acpi",
          "Enable ACPI");
++    object_class_property_add_bool(oc, "spark-rot-error-replies",
++                                   virt_get_spark_rot_error_replies,
++                                   virt_set_spark_rot_error_replies);
++    object_class_property_set_description(oc, "spark-rot-error-replies",
++        "Opt-in ROT transport failure scenario; unavailable services return errors");
 +    object_class_property_add_bool(oc, "spark-fw-lab", virt_get_spark_fw_lab,
 +                                   virt_set_spark_fw_lab);
 +    object_class_property_set_description(oc, "spark-fw-lab",
@@ -136,11 +376,35 @@
      object_class_property_set_description(oc, "secure",
 --- a/include/hw/arm/virt.h
 +++ b/include/hw/arm/virt.h
-@@ -166,6 +166,9 @@
+@@ -159,6 +159,17 @@
+     bool hvf_no_kernel_irqchip_default;
+ };
+ 
++/* Experimental polled ROT transport; service payloads are not implemented. */
++typedef struct SparkRotMailbox {
++    MemoryRegion iomem;
++    uint32_t tx[16];
++    unsigned tx_count;
++    uint32_t reply;
++    bool reply_pending;
++    bool ack_pending;
++    bool reply_consumed;
++} SparkRotMailbox;
++
+ struct VirtMachineState {
+     MachineState parent;
+     Notifier machine_done;
+@@ -166,6 +177,15 @@
      FWCfgState *fw_cfg;
      PFlashCFI01 *flash[2];
      bool secure;
 +    bool spark_fw_lab;
++    bool spark_rot_error_replies;
++    SparkRotMailbox spark_rot[2];
++    MemoryRegion spark_eint_mmio;
++    MemoryRegion spark_eint_banks[4];
++    uint32_t spark_eint[4][1024];
++    qemu_irq spark_eint_irq;
 +    MemoryRegion spark_gpio_mmio[11];
 +    uint32_t spark_gpio[11][256];
      bool highmem;

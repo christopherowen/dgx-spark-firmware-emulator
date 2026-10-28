@@ -15,7 +15,7 @@
       "id": "mt8901-pinctrl",
       "url": "https://github.com/NVIDIA/NV-Kernels/pull/564",
       "revision": "7c2e0248c71b59e72355ef09c6834bdb0a828f22",
-      "supports": "MT8901 ACPI GPIO/wake behavior; target board applicability needs verification"
+      "supports": "MT8901 ACPI GPIO/wake behavior; NVDA9221 identity corroborated by private Spark inventory"
     },
     {
       "id": "sspm-interface",
@@ -54,6 +54,27 @@
       "id": "uefi-firmware-management",
       "url": "https://uefi.org/specs/UEFI/2.10/23_Firmware_Update_and_Reporting.html",
       "supports": "Firmware management capsule wrapper structure; not vendor payload semantics"
+    },
+    {
+      "id": "mt8901-eint-registers",
+      "url": "https://github.com/NVIDIA/NV-Kernels/blob/0697f87f98083d0af96676725709e760543b7a07/drivers/pinctrl/mediatek/mtk-eint.c",
+      "revision": "0697f87f98083d0af96676725709e760543b7a07",
+      "supports": "EINT status/ack, mask, sensitivity, software, polarity, domain, and debounce register layout"
+    },
+    {
+      "id": "edk2-architectural-protocol-table",
+      "url": "https://github.com/tianocore/edk2/blob/master/MdeModulePkg/Core/Dxe/DxeMain/DxeProtocolNotify.c",
+      "supports": "Architectural protocol table order and present flags; runner validates all 13 GUIDs before reporting"
+    },
+    {
+      "id": "edk2-ffa-abi",
+      "url": "https://github.com/tianocore/edk2/blob/master/MdePkg/Include/IndustryStandard/ArmFfaSvc.h",
+      "supports": "FF-A function IDs, including RXTX_MAP AArch64 0xc4000066"
+    },
+    {
+      "id": "qemu-psci-implementation",
+      "url": "https://github.com/qemu/qemu/blob/v11.1.2/target/arm/tcg/psci.c",
+      "supports": "Default virt PSCI conduit returns unsupported for unimplemented function IDs"
     }
   ]
 }

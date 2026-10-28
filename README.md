@@ -4,8 +4,9 @@ The goal is to execute DGX Spark firmware in a reproducible emulator, including
 the MediaTek MT8901-related hardware and firmware interfaces needed along the way.
 
 **Status: real Spark UEFI executes through SEC and DXE entry.** The experimental
-QEMU profile also reaches serial **`Checkpoint 61`**. Full boot is incomplete:
-the current run faults in `SaveApplLog` at the unmodeled `0x180100c0` access.
+QEMU profile also reaches serial **`Checkpoint 61`**. An optional Root of Trust
+error-reply scenario reaches **`D3` and `90`**, then stops with missing UEFI
+architectural protocols and an exception. Full boot is incomplete.
 There is no complete GB10/MT8901, secure-monitor, or GPU model. See the
 [measured boot status](docs/boot-status.md).
 
@@ -55,6 +56,30 @@ python3 tools/run_spark.py --qemu build/qemu-spark/qemu-system-aarch64 \
 The continuation reaches checkpoint `61`, then currently returns nonzero for
 the firmware exception. Per-run UART output, traces, registers, and `run.json`
 remain local under `firmware/runs/`.
+
+To explore the later failure path with explicit errors for unavailable Root
+of Trust services:
+
+```sh
+python3 tools/run_spark.py --qemu build/qemu-spark/qemu-system-aarch64 \
+  --experimental-address-profile --rot-error-replies --continue-seconds 5
+```
+
+This scenario still returns nonzero: no Root of Trust service succeeds and no
+secure partition executes. The runner records missing architectural protocols
+and requested secure-monitor function IDs to help identify the next dependency.
+
+## Collect read-only hardware evidence
+
+```sh
+python3 tools/collect_hardware.py USER@HOST
+```
+
+Requires SSH access and passwordless `sudo` for inventory reads. Captures include
+ACPI tables, resource/interrupt maps, board and firmware versions, PCI inventory,
+and kernel logs. They stay locally in ignored `firmware/hardware/`. The tool
+does not access device registers directly, flash firmware, or change the host.
+See [hardware findings](docs/hardware-findings.md) for reviewed address facts.
 
 ## Download other firmware locally
 
@@ -135,11 +160,11 @@ python3 tools/check_publication.py
 
 CI rejects tracked firmware/local artifacts, runs synthetic tests and the generic
 QEMU/EDK II smoke test, and builds the custom QEMU profile to test GPIO aliases,
-GICv3 identification, and serial output with original synthetic code. Vendor
+GICv3 identification, UART interrupt delivery, EINT software interrupts, and
+Root of Trust error replies with original synthetic code. Vendor
 firmware is never downloaded by CI or uploaded as an artifact.
 The Apache-2.0 license covers this project's own tools and documentation. The QEMU
 patch is GPL-2.0-or-later; firmware and external projects retain their licenses.
 
 The first Spark-specific execution checkpoint is implemented. Next is modeling
-the remaining platform interfaces to continue beyond checkpoint `61` toward
-the firmware console.
+the remaining platform and secure firmware services toward the firmware console.
