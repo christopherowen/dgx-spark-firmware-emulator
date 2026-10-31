@@ -25,6 +25,7 @@ For local tests with the pinned vendor firmware:
 python3 tools/boot_spark.py --smoke-test
 python3 tools/boot_spark.py --smoke-test
 python3 tools/boot_spark.py --pxe-test --state-file firmware/state/pxe-nor.bin
+python3 tools/probe_mm.py
 ```
 
 Stage intended source changes, then check the index before committing:
@@ -42,11 +43,12 @@ artifacts. Firmware-dependent boot checks are local only.
 | Location | Purpose |
 | --- | --- |
 | `tools/boot_spark.py` | Interactive setup, setup verification and PXE verification |
+| `tools/probe_mm.py` | Local unchanged-STMM buffer-discovery and pointer-rejection probe |
 | `tools/qemu_control.py` | Shared QMP/GDB clients and connection ownership |
 | `tools/handoff.py` | Full-boot and diagnostic loader memory tags |
 | `tools/spark_image.py`, `tools/prepare_mm.py` | Pinned local UEFI/MM extraction and hash checks |
 | `tools/pxe.py`, `uefi/pxe_probe.c` | Original EFI probe build and packet evidence checks |
-| `monitor/` | Original EL3/S-EL2 monitor and functional flash service |
+| `monitor/` | Original EL3/S-EL2 monitor, bounded FF-A sharing and functional flash service |
 | `qemu/` | Pinned upstream patch and device-model documentation |
 | `tests/` | Synthetic fixtures and unit/integration checks |
 | `research/sources.json` | Reviewed primary-source references |
@@ -55,6 +57,10 @@ Upstream source, host tools and generated monitor binaries belong in ignored
 `build/`. Vendor images, persistent NOR, captures and run evidence belong in
 ignored `firmware/`. Keep the original acquisition evidence when reorganizing
 local experiments; it is not disposable build output.
+
+The [MM sharing notes](mm-sharing.md) distinguish FF-A transaction registration
+from the firmware's fixed MM communication buffer and describe the local probe's
+execution-breakpoint evidence and error-delivery limitation.
 
 ## SEC/DXE entry diagnostic
 

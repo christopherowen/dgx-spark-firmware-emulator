@@ -15,6 +15,10 @@ not support those extensions or multiple CPUs.
 Supported FF-A operations are the pinned image's version/identity discovery,
 one-page RX/TX mapping, MM partition discovery/release, direct MM requests,
 MM wait/responses, and one bounded synchronous flash memory share/reclaim.
+Normal-world sharing with STMM has a separate bounded share/retrieve/relinquish/
+reclaim lifecycle with caller, descriptor, region and permission validation.
+See [MM sharing and firmware buffer checks](../docs/mm-sharing.md) for the
+supported wire format and the unchanged firmware's fixed-buffer restriction.
 Unsupported calls return errors. This is a compatibility subset, not an FF-A
 conformance implementation or a replacement for production Hafnium/TF-A.
 
@@ -49,5 +53,7 @@ The synthetic integration test executes original S-EL1 and NS-EL2 guests,
 checks MM discovery and bad mapping rejection, makes two world switches,
 checks FP/SIMD and thread-register preservation, TRNG discovery/bounds/bit
 packing/nonrepeating requests, and timer PPI 30.
+An additional synthetic guest pair exercises NS memory sharing, RX ownership,
+retrieval and reclaim alongside a concurrent secure flash transaction.
 Native tests exercise the exact `nor.c` used by the monitor. CI has no vendor
 inputs and publishes no firmware or execution captures.

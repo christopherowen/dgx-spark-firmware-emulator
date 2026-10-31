@@ -26,7 +26,7 @@ def build_monitor():
     output.mkdir(parents=True, exist_ok=True)
     compiler, linker, objcopy = [find_tool(x) for x in ("clang", "ld.lld", "llvm-objcopy")]
     objects = []
-    for source in ("start.S", "monitor.c", "nor.c"):
+    for source in ("start.S", "monitor.c", "nor.c", "ffa_memory.c"):
         obj = output / (source + ".o")
         subprocess.run([compiler, "--target=aarch64-none-elf", "-O2", "-ffreestanding",
                         "-fno-builtin", "-fno-stack-protector",

@@ -2,6 +2,7 @@
  * Original experimental Spark firmware laboratory monitor.
  */
 #include "nor.h"
+#include "ffa_memory.h"
 
 typedef unsigned long u64;
 typedef unsigned int u32;
@@ -46,6 +47,11 @@ static void unsupported(u64 *r) {
     r[0] = ERROR;
     r[2] = -1UL;
 }
+static void ffa_error(u64 *r, int error) {
+    clear(r);
+    r[0] = ERROR;
+    r[2] = (u64)(long)error;
+}
 struct context {
     u64 r[31], pc, pstate;
     u64 SP_EL0;
@@ -84,6 +90,7 @@ static int ns_started, ns_pending;
 static u64 ns_rx, ns_tx, sp_rx, sp_tx;
 static u64 *sp_hvc_frame;
 static u64 shared_address, shared_size;
+static struct ffa_memory ns_memory;
 static int ns_rx_full, sp_rx_full;
 
 /* Lab RAM only. Monitor stacks and the NOR backing are never message buffers. */
@@ -397,6 +404,15 @@ void handle(u64 *r, u64 level) {
             unsupported(r);
             return;
         }
+        u64 other_tx = ns ? sp_tx : ns_tx, other_rx = ns ? sp_rx : ns_rx;
+        u64 start = ns_memory.descriptor[10], end = start + ns_memory.descriptor[11] * 4096;
+        if ((ns && (!ffa_ns_buffer(r[1], 4096) || !ffa_ns_buffer(r[2], 4096))) ||
+            r[1] == other_tx || r[1] == other_rx || r[2] == other_tx || r[2] == other_rx ||
+            (ns_memory.handle && ((r[1] < end && r[1] + 4096 > start) ||
+                                  (r[2] < end && r[2] + 4096 > start)))) {
+            ffa_error(r, FFA_DENIED);
+            return;
+        }
         if (ns) {
             ns_tx = r[1];
             ns_rx = r[2];
@@ -407,10 +423,85 @@ void handle(u64 *r, u64 level) {
         success(r);
         return;
     }
-    if (fid == 0x84000073) {
-        u64 tx = ns ? ns_tx : sp_tx;
+    if (fid == 0x84000064) {
+        u32 feature = r[1];
+        int retrieve = feature == 0x84000074 || feature == 0xc4000074;
+        if (ns ? (feature != 0x84000073 && feature != 0xc4000073 && feature != 0x84000077)
+               : (!retrieve && feature != 0x84000076 && feature != 0x84000073 && feature != 0x84000077))
+            unsupported(r);
+        else if ((retrieve ? r[2] & ~2UL : r[2]) || r[3] || r[4] || r[5] || r[6] || r[7])
+            ffa_error(r, FFA_INVALID_PARAMETERS);
+        else {
+            success(r);
+            if (retrieve)
+                r[2] = 2; /* Non-secure attribute supported in retrieve responses. */
+        }
+        return;
+    }
+    if ((fid == 0x84000073 || fid == 0xc4000073) && ns) {
+        if (!ns_tx || r[1] != 96 || r[2] != 96 || r[3] || r[4] || r[5] || r[6] || r[7]) {
+            ffa_error(r, FFA_INVALID_PARAMETERS);
+            return;
+        }
+        u64 mailboxes[] = {ns_tx, ns_rx, sp_tx, sp_rx};
+        int error = ffa_memory_share(&ns_memory, (u64 *)ns_tx, mailboxes);
+        if (error)
+            ffa_error(r, error);
+        else {
+            success(r);
+            r[2] = (u32)ns_memory.handle;
+            r[3] = ns_memory.handle >> 32;
+        }
+        return;
+    }
+    if ((fid == 0x84000074 || fid == 0xc4000074) && !ns) {
+        if (!sp_tx || !sp_rx || r[1] != 64 || r[2] != 64 || r[3] || r[4] || r[5] || r[6] || r[7]) {
+            ffa_error(r, FFA_INVALID_PARAMETERS);
+            return;
+        }
+        if (sp_rx_full) {
+            ffa_error(r, FFA_BUSY);
+            return;
+        }
+        int error = ffa_memory_retrieve(&ns_memory, (u64 *)sp_tx, (u64 *)sp_rx);
+        if (error)
+            ffa_error(r, error);
+        else {
+            sp_rx_full = 1;
+            clear(r);
+            r[0] = 0x84000075;
+            r[1] = r[2] = 96;
+        }
+        return;
+    }
+    if (fid == 0x84000076 && !ns) {
+        if (!sp_tx || r[1] || r[2] || r[3] || r[4] || r[5] || r[6] || r[7]) {
+            ffa_error(r, FFA_INVALID_PARAMETERS);
+            return;
+        }
+        int error = ffa_memory_relinquish(&ns_memory, (u64 *)sp_tx);
+        if (error)
+            ffa_error(r, error);
+        else
+            success(r);
+        return;
+    }
+    if (fid == 0x84000077 && ns) {
+        if (r[1] >> 32 || r[2] >> 32 || r[3] || r[4] || r[5] || r[6] || r[7]) {
+            ffa_error(r, FFA_INVALID_PARAMETERS);
+            return;
+        }
+        int error = ffa_memory_reclaim(&ns_memory, r[1] | r[2] << 32);
+        if (error)
+            ffa_error(r, error);
+        else
+            success(r);
+        return;
+    }
+    if (fid == 0x84000073 && !ns) {
+        u64 tx = sp_tx;
         u64 *t = (u64 *)tx;
-        if (ns || !tx || r[1] != 96 || r[2] != 96 || (u32)t[3] != 16 || (t[3] >> 32) != 1 ||
+        if (!tx || r[1] != 96 || r[2] != 96 || (u32)t[3] != 16 || (t[3] >> 32) != 1 ||
             t[4] != 48 || (t[6] >> 32) != 64 || (u16)t[6] != 0x8002 || (t[8] >> 32) != 1 ||
             t[11] > 16 || !t[11]) {
             unsupported(r);

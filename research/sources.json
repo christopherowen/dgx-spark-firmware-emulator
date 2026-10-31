@@ -2,6 +2,19 @@
   "checked_on": "2026-10-28",
   "sources": [
     {
+      "id": "nvidia-hafnium-mm-buffer-contract",
+      "url": "https://github.com/NVIDIA/edk2-nvidia/blob/cb638768ec174bb2041f87569409c53e4af4292e/Silicon/NVIDIA/StandaloneMm/Library/StandaloneMmHafniumEntryPoint/AArch64/StandaloneMmCoreEntryPoint.c",
+      "revision": "cb638768ec174bb2041f87569409c53e4af4292e",
+      "checked_on": "2026-10-31",
+      "supports": "Published STMM NS-buffer discovery and MM communication conventions; pinned image behavior separately verified in local execution"
+    },
+    {
+      "id": "hafnium-ffa-memory-sharing",
+      "url": "https://hafnium.docs.trustedfirmware.org/en/latest/secure-partition-manager/secure-partition-manager.html#memory-sharing",
+      "checked_on": "2026-10-31",
+      "supports": "NS-to-secure sharing, retrieve, relinquish, reclaim and permission/ownership lifecycle; not proof of Spark SPMC implementation"
+    },
+    {
       "id": "nvidia-software-stack",
       "url": "https://docs.nvidia.com/dgx/dgx-spark-porting-guide/latest/porting/software-requirements.html",
       "supports": "UEFI, firmware update transport, and platform software context"

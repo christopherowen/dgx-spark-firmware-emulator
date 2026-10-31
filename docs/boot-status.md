@@ -1,6 +1,6 @@
 # Measured Spark boot status
 
-Verified locally on 2026-10-28 with QEMU 11.1.2 TCG and one AArch64 CPU:
+Verified locally on 2026-10-31 with QEMU 11.1.2 TCG and one AArch64 CPU:
 **the real Spark UEFI boots through BDS to interactive AMI setup.** Keyboard
 navigation from Main to Advanced works. Native IPv4 PXE obtains a DHCP lease,
 downloads an original EFI application and executes it. A second cold boot
@@ -81,7 +81,7 @@ No additional EFI network driver, iPXE or injected network protocol is used.
 The monitor loads only UEFI/MM; the probe enters guest memory through the
 native firmware's network download and EFI loader.
 
-The verified default-settings run used client `10.0.2.15`, server `10.0.2.2`,
+The initial 2026-10-28 default-settings run used client `10.0.2.15`, server `10.0.2.2`,
 and a 2,048-byte original probe transferred in two TFTP data blocks, with a
 negotiated block size of 1,468 bytes. The runner checks DHCP DORA for the NIC's
 MAC and transaction ID, reconstructs the exact payload from acknowledged TFTP
@@ -103,6 +103,10 @@ QEMU xHCI cores, plus bounded configuration models for GPIO, EINT, USB PHY,
 PCIe and board information. The original [monitor](../monitor/README.md)
 implements the observed FF-A compatibility subset, flash/clock peers and
 host-backed SMCCC TRNG.
+The [NS memory-sharing extension](mm-sharing.md) adds a bounded FF-A lifecycle
+without changing STMM's fixed MM communication-buffer checks. A separate
+local probe verifies the unchanged firmware accepts its advertised buffer and
+rejects an outside pointer even after a successful share.
 Root of Trust requests receive explicit nonzero errors; no attestation or
 security/logging service is reported as successful.
 

@@ -86,6 +86,7 @@ needs the platform interfaces exercised by its firmware.
 - [Boot status and limitations](docs/boot-status.md)
 - [QEMU profile and compatibility NIC](qemu/README.md)
 - [Monitor, flash, clock and entropy services](monitor/README.md)
+- [FF-A sharing and STMM's communication-buffer contract](docs/mm-sharing.md)
 - [Development, diagnostics and hardware collection](docs/development.md)
 - [Backend decision](docs/architecture.md), [roadmap](docs/roadmap.md) and [primary sources](research/sources.json)
 
