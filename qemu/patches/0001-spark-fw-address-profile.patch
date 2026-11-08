@@ -1,3 +1,55 @@
+diff --git a/include/hw/arm/virt.h b/include/hw/arm/virt.h
+--- a/include/hw/arm/virt.h
++++ b/include/hw/arm/virt.h
+@@ -159,6 +159,17 @@
+     bool hvf_no_kernel_irqchip_default;
+ };
+ 
++/* Experimental polled ROT transport; service payloads are not implemented. */
++typedef struct SparkRotMailbox {
++    MemoryRegion iomem;
++    uint32_t tx[16];
++    unsigned tx_count;
++    uint32_t reply;
++    bool reply_pending;
++    bool ack_pending;
++    bool reply_consumed;
++} SparkRotMailbox;
++
+ struct VirtMachineState {
+     MachineState parent;
+     Notifier machine_done;
+@@ -166,6 +177,29 @@
+     FWCfgState *fw_cfg;
+     PFlashCFI01 *flash[2];
+     bool secure;
++    bool spark_fw_lab;
++    bool spark_rot_error_replies;
++    SparkRotMailbox spark_rot[2];
++    MemoryRegion spark_ecam;
++    uint8_t spark_root_config[15][4096];
++    MemoryRegion spark_pcie_cfg[36];
++    uint8_t spark_pcie_cfgregs[36][0x10000];
++    MemoryRegion spark_boardcfg;
++    uint32_t spark_boardregs[1024];
++    MemoryRegion spark_fuse;
++    uint32_t spark_fuse_regs[0x10000 / 4];
++    MemoryRegion spark_pcie_syscfg;
++    uint32_t spark_pcie_sysregs[1024];
++    MemoryRegion spark_usb_config[36];
++    uint32_t spark_usb_regs[36][0x20000 / 4];
++    MemoryRegion spark_boot_sram;
++    MemoryRegion spark_boot_sram_secure;
++    MemoryRegion spark_eint_mmio;
++    MemoryRegion spark_eint_banks[4];
++    uint32_t spark_eint[4][1024];
++    qemu_irq spark_eint_irq;
++    MemoryRegion spark_gpio_mmio[11];
++    uint32_t spark_gpio[11][256];
+     bool highmem;
+     bool highmem_compact;
+     bool highmem_cxl;
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 --- a/hw/arm/virt.c
 +++ b/hw/arm/virt.c
 @@ -29,6 +29,8 @@
@@ -48,11 +100,10 @@
      gic_connect_ppis(vms);
  
      fdt_add_gic_node(vms);
-@@ -1512,6 +1521,14 @@
-     DeviceState *dev = qdev_new(TYPE_PL011);
+@@ -1513,6 +1522,14 @@
      SysBusDevice *s = SYS_BUS_DEVICE(dev);
      MachineState *ms = MACHINE(vms);
-+
+ 
 +    if (vms->spark_fw_lab && uart == VIRT_UART0) {
 +        object_unref(OBJECT(dev));
 +        serial_mm_init(mem, 0x16a00000, 2,
@@ -60,13 +111,37 @@
 +                       DEVICE_LITTLE_ENDIAN);
 +        return;
 +    }
- 
++
      qdev_prop_set_chr(dev, "chardev", chr);
      sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-@@ -2198,6 +2215,15 @@
+     memory_region_add_subregion(mem, base,
+@@ -2198,6 +2215,38 @@
                                      high_mmio_alias);
      }
  
++    if (vms->spark_fw_lab) {
++        /* SBSA generic watchdog, at the address the inventoried board reports
++         * (0x1c041000), with the control frame one 4 KiB page above it. The
++         * board's own watchdog service arms WOR/WCS in these frames; without
++         * this model a stalled payload hangs instead of resetting.
++         *
++         * Only WS0 is a QEMU irq, and it is the first stage: the device raises
++         * it as an interrupt. The second stage (WS1) is what resets the machine,
++         * and the device performs that action itself, so nothing is connected
++         * for it. Mapping and the WS0 irq follow virt_machine_device_plug_cb()'s
++         * own wiring, so the device sits where the generic board puts it. */
++        DeviceState *gwdt = qdev_new(TYPE_WDT_SBSA);
++        SysBusDevice *gwdtsb = SYS_BUS_DEVICE(gwdt);
++
++        qdev_prop_set_uint64(gwdt, "clock-frequency", 1000000000ULL);
++        sysbus_realize_and_unref(gwdtsb, &error_fatal);
++        sysbus_mmio_map(gwdtsb, 0, 0x1c041000);
++        sysbus_mmio_map(gwdtsb, 1, 0x1c042000);
++        sysbus_connect_irq(gwdtsb, 0,
++                           qdev_get_gpio_in(vms->gic,
++                                            32 + vms->irqmap[VIRT_GWDT_WS0]));
++    }
++
 +    if (vms->spark_fw_lab) {
 +        MemoryRegion *spark_pci_mmio = g_new0(MemoryRegion, 1);
 +        /* Spark assigns PCI BARs below its 0x80000000 DRAM start. */
@@ -79,7 +154,7 @@
      /* Map IO port space */
      sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, base_pio);
  
-@@ -2526,6 +2552,343 @@
+@@ -2526,6 +2575,343 @@
      }
  }
  
@@ -423,12 +498,26 @@
  static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
  {
      MachineState *ms = MACHINE(vms);
-@@ -2536,6 +2899,146 @@
+@@ -2534,10 +2920,162 @@
  
-     for (i = 0; i < ARRAY_SIZE(base_memmap); i++) {
-         vms->memmap[i] = base_memmap[i];
+     vms->memmap = extended_memmap;
+ 
++    /* The inventoried Spark board maps its SBSA generic watchdog at
++     * 0x1c041000 (control frame one 4 KiB page higher) and delivers WS0 on
++     * SPI 848.  Placing it here makes the GTDT describe the same frames the
++     * device is mapped at, so the firmware's watchdog service binds to real
++     * registers instead of a protocol stub. */
++    if (vms->spark_fw_lab) {
++        vms->memmap[VIRT_GWDT_REFRESH].base = 0x1c041000;
++        vms->memmap[VIRT_GWDT_CONTROL].base = 0x1c042000;
++        /* The WS0 line keeps the machine's existing irqmap entry so that the
++         * GTDT entry and sysbus_connect_irq agree without a second edit. */
 +    }
 +
+     for (i = 0; i < ARRAY_SIZE(base_memmap); i++) {
+         vms->memmap[i] = base_memmap[i];
+     }
+ 
 +    if (vms->spark_fw_lab) {
 +        /* Experimental single-CPU Spark firmware profile, not a GB10 model. */
 +        static const hwaddr gpio_bases[] = {
@@ -567,14 +656,15 @@
 +            error_report("spark-fw-lab requires one CPU and GICv3");
 +            exit(1);
 +        }
-     }
- 
++    }
++
      if (ms->ram_slots > ACPI_MAX_RAM_SLOTS) {
-@@ -2942,6 +3445,21 @@
- 
+         error_report("unsupported number of memory slots: %"PRIu64,
+                      ms->ram_slots);
+@@ -2943,6 +3481,21 @@
      firmware_loaded = virt_firmware_init(vms, sysmem,
                                           secure_sysmem ?: sysmem);
-+
+ 
 +    if (vms->spark_fw_lab) {
 +        /* Early boot SRAM, including the loader's cached NOR identification. */
 +        memory_region_init_ram(&vms->spark_boot_sram, NULL,
@@ -589,15 +679,14 @@
 +                                               &vms->spark_boot_sram_secure, 1);
 +        }
 +    }
- 
++
      /* If we have an EL3 boot ROM then the assumption is that it will
       * implement PSCI itself, so disable QEMU's internal implementation
-@@ -3262,6 +3780,26 @@
- 
-     vms->machine_done.notify = virt_machine_done;
+      * so it doesn't get in the way. Instead of starting secondary
+@@ -3264,6 +3817,26 @@
      qemu_add_machine_init_done_notifier(&vms->machine_done);
-+}
-+
+ }
+ 
 +static bool virt_get_spark_fw_lab(Object *obj, Error **errp)
 +{
 +    return VIRT_MACHINE(obj)->spark_fw_lab;
@@ -616,10 +705,12 @@
 +static void virt_set_spark_rot_error_replies(Object *obj, bool value, Error **errp)
 +{
 +    VIRT_MACHINE(obj)->spark_rot_error_replies = value;
- }
- 
++}
++
  static bool virt_get_secure(Object *obj, Error **errp)
-@@ -4213,6 +4751,15 @@
+ {
+     VirtMachineState *vms = VIRT_MACHINE(obj);
+@@ -4213,6 +4786,15 @@
          NULL, NULL);
      object_class_property_set_description(oc, "acpi",
          "Enable ACPI");
@@ -635,56 +726,7 @@
      object_class_property_add_bool(oc, "secure", virt_get_secure,
                                     virt_set_secure);
      object_class_property_set_description(oc, "secure",
---- a/include/hw/arm/virt.h
-+++ b/include/hw/arm/virt.h
-@@ -159,6 +159,17 @@
-     bool hvf_no_kernel_irqchip_default;
- };
- 
-+/* Experimental polled ROT transport; service payloads are not implemented. */
-+typedef struct SparkRotMailbox {
-+    MemoryRegion iomem;
-+    uint32_t tx[16];
-+    unsigned tx_count;
-+    uint32_t reply;
-+    bool reply_pending;
-+    bool ack_pending;
-+    bool reply_consumed;
-+} SparkRotMailbox;
-+
- struct VirtMachineState {
-     MachineState parent;
-     Notifier machine_done;
-@@ -166,6 +177,29 @@
-     FWCfgState *fw_cfg;
-     PFlashCFI01 *flash[2];
-     bool secure;
-+    bool spark_fw_lab;
-+    bool spark_rot_error_replies;
-+    SparkRotMailbox spark_rot[2];
-+    MemoryRegion spark_ecam;
-+    uint8_t spark_root_config[15][4096];
-+    MemoryRegion spark_pcie_cfg[36];
-+    uint8_t spark_pcie_cfgregs[36][0x10000];
-+    MemoryRegion spark_boardcfg;
-+    uint32_t spark_boardregs[1024];
-+    MemoryRegion spark_fuse;
-+    uint32_t spark_fuse_regs[0x10000 / 4];
-+    MemoryRegion spark_pcie_syscfg;
-+    uint32_t spark_pcie_sysregs[1024];
-+    MemoryRegion spark_usb_config[36];
-+    uint32_t spark_usb_regs[36][0x20000 / 4];
-+    MemoryRegion spark_boot_sram;
-+    MemoryRegion spark_boot_sram_secure;
-+    MemoryRegion spark_eint_mmio;
-+    MemoryRegion spark_eint_banks[4];
-+    uint32_t spark_eint[4][1024];
-+    qemu_irq spark_eint_irq;
-+    MemoryRegion spark_gpio_mmio[11];
-+    uint32_t spark_gpio[11][256];
-     bool highmem;
-     bool highmem_compact;
-     bool highmem_cxl;
+diff --git a/hw/net/meson.build b/hw/net/meson.build
 --- a/hw/net/meson.build
 +++ b/hw/net/meson.build
 @@ -12,7 +12,7 @@
