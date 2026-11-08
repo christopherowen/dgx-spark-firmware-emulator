@@ -64,6 +64,39 @@ USB PD controller, NIC, or other firmware processors. CPU feature requirements,
 exception level, secure monitor/FF-A services, reset vectors, RAM/flash layout,
 interrupt wiring, and capsule payload boundaries must come from evidence.
 
+## What this machine models, and what it does not
+
+The machine boots the board's own firmware images and reproduces the board's flash geometry: a 64 MiB
+part with the variable store at `0x0` and the code volume at `0x2000000`, programmed in 256-byte
+pages and erased in 4 KiB sectors, with the GWDT at `0x1c041000` resetting a stalled boot. Those are
+the parts firmware behaviour depends on, and they are covered by tests that do not need a board.
+
+The flash survives a machine reset, as the part does. A `-device loader` blob is a ROM to QEMU and is
+re-applied on every reset, so the image the loader carries is only the seed: the monitor copies it
+once into a second window the loader does not own (`0xa0000000 + NOR_SIZE + 0x1000`) and serves every
+request from there. A page programmed before a watchdog reset is therefore still programmed after it,
+which is what a reboot cycle on a poisoned store depends on — otherwise each cycle would start from
+the image the run began with and re-write the same bytes for ever.
+
+The same applies to the code half. The loader replays its file on every reset, so a boot image sliced
+out of the flash would be frozen at the moment the run started; the monitor instead copies the code
+region out of the live window on every start, and a code byte the firmware programmed is what the
+next boot executes.
+
+It is not a GB10. The GPIO/EINT banks, the UART and the RTL8168 model are approximations for the
+paths they are used on; there is no SPI controller in the normal world (the board's belongs to the
+Flash Service partition), one CPU instead of twenty, and one gigabyte of DRAM instead of a board-class memory — the profile aliases PCI BAR space over the lowest gigabyte, and the loader tag describes the rest of the allocation, so `--memory` beyond 2 GiB adds usable RAM rather than hidden RAM. Each
+of those is named below with its reason and what would close it, so a result taken here can be
+attributed to the firmware rather than to the model:
+
+| Not modelled | Why | What closes it |
+| --- | --- | --- |
+| Where a power loss lands inside a page | the model commits a page and then spends its time; a torn page is a property of the silicon | a part on a bench with a switchable supply |
+| The part's real erase and program times | `--board` applies datasheet-typical values (400 µs a page, 40 ms a sector); the board's own part has not been timed | a metered part, or a timing run on a unit |
+| An eSPI peripheral | the firmware's eSPI path is not touched by any result this lab has taken | a test that depends on eSPI |
+| An NVMe device | no measured result depends on the firmware finding a block device | a test that enumerates storage |
+| Board-class RAM and 20 CPUs | the profile enforces one CPU, and the loader tag stops describing memory at `0x100000000`, so at most 2 GiB is usable | a machine profile with more CPUs, the PSCI work that follows it, and a host with the memory |
+
 The tools inspect local artifacts and run the emulator. The separate,
 explicitly invoked hardware collector performs read-only SSH inventory reads.
 No physical register writes or firmware update operations are implemented.

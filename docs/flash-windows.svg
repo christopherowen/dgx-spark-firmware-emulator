@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="500" viewBox="0 0 1040 500" role="img" aria-labelledby="title desc">
+  <title id="title">Flash model before and after this branch</title>
+  <desc id="desc">Before: a 1 MiB store loaded from a host file and a boot image taken from another host file, with a machine reset restoring whatever the loader carried. After: a 64 MiB device image whose store and code volumes share one part, loaded once as a seed into a window QEMU restores on reset, with the monitor serving flash from a second window no loader owns and copying the boot image out of it at every start.</desc>
+
+  <style>
+    .frame { fill: #ffffff; stroke: #c8cdd4; stroke-width: 1.5; }
+    .panel { fill: #f7f8fa; stroke: #c8cdd4; stroke-width: 1.5; }
+    .label { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #1f2328; }
+    .small { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #57606a; }
+    .head { font: bold 14px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #1f2328; }
+    .title { font: bold 20px ui-sans-serif, system-ui, sans-serif; fill: #1f2328; }
+    .sub { font: 13px ui-sans-serif, system-ui, sans-serif; fill: #57606a; }
+    .store { fill: #dbeafe; stroke: #3b82f6; stroke-width: 1.5; }
+    .code { fill: #dcfce7; stroke: #16a34a; stroke-width: 1.5; }
+    .host { fill: #fef3c7; stroke: #d97706; stroke-width: 1.5; }
+    .seed { fill: #fde68a; stroke: #b45309; stroke-width: 1.5; }
+    .live { fill: #bbf7d0; stroke: #15803d; stroke-width: 1.8; }
+    .state { fill: #e5e7eb; stroke: #6b7280; stroke-width: 1.2; }
+    .bad { fill: #fee2e2; stroke: #dc2626; stroke-width: 1.5; }
+    .arrow { stroke: #424a53; stroke-width: 1.6; fill: none; marker-end: url(#arrowhead); }
+  </style>
+
+  <defs>
+    <marker id="arrowhead" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 z" fill="#424a53"/>
+    </marker>
+  </defs>
+
+  <rect class="frame" x="1" y="1" width="1038" height="498" rx="10"/>
+  <text class="title" x="24" y="34">What the model carries, before and after</text>
+  <text class="sub" x="24" y="56">Same machine profile in both panels: the flash path and the watchdog are what change.</text>
+
+  <!-- BEFORE -->
+  <rect class="panel" x="24" y="76" width="488" height="404" rx="8"/>
+  <text class="head" x="40" y="102">Before</text>
+  <text class="small" x="40" y="120">1 MiB store at an invented offset</text>
+
+  <rect class="host" x="52" y="140" width="188" height="50" rx="6"/>
+  <text class="label" x="64" y="162">uefi.fd</text>
+  <text class="small" x="64" y="180">host file to 0x80800000</text>
+
+  <rect class="store" x="52" y="208" width="188" height="50" rx="6"/>
+  <text class="label" x="64" y="230">store, 1 MiB</text>
+  <text class="small" x="64" y="248">at flash 0x03000000</text>
+
+  <path class="arrow" d="M252 165 L300 165"/>
+  <path class="arrow" d="M252 233 L300 233"/>
+  <rect class="frame" x="306" y="136" width="186" height="126" rx="6" fill="#ffffff"/>
+  <text class="label" x="320" y="160">guest RAM</text>
+  <text class="small" x="320" y="180">code at 0x80800000</text>
+  <text class="small" x="320" y="198">flash at 0xa0000000</text>
+  <text class="small" x="320" y="220">two loader files:</text>
+  <text class="small" x="320" y="236">code and store</text>
+
+  <rect class="bad" x="52" y="282" width="440" height="66" rx="6"/>
+  <text class="label" x="66" y="306">a reset restores that blob</text>
+  <text class="small" x="66" y="326">QEMU re-applies every loader file, so a page the</text>
+  <text class="small" x="66" y="342">guest programmed is gone at the next reset.</text>
+
+  <text class="small" x="52" y="378">no watchdog: a stalled guest hangs forever</text>
+  <text class="small" x="52" y="400">programs and erases take no time</text>
+  <text class="small" x="52" y="422">command 8 answers success to any caller</text>
+  <text class="small" x="52" y="444">a code write is invisible: the boot image is a host file</text>
+
+  <!-- AFTER -->
+  <rect class="panel" x="528" y="76" width="488" height="404" rx="8"/>
+  <text class="head" x="544" y="102">After</text>
+  <text class="small" x="544" y="120">one 64 MiB device image, store and code together</text>
+
+  <rect class="store" x="544" y="134" width="220" height="28" rx="4"/>
+  <text class="small" x="552" y="153">store FV 0x0</text>
+  <rect class="code" x="764" y="134" width="236" height="28" rx="4"/>
+  <text class="small" x="772" y="153">code FV 0x2000000</text>
+  <text class="small" x="544" y="180">device 0x4000000, the board's part</text>
+
+  <path class="arrow" d="M600 182 L600 202"/>
+  <text class="small" x="610" y="198">loaded every reset</text>
+
+  <rect class="seed" x="544" y="204" width="196" height="46" rx="5"/>
+  <text class="label" x="554" y="224">seed window</text>
+  <text class="small" x="544" y="268">copied into the live window once, while it is blank</text>
+  <text class="small" x="554" y="241">0xa0000000, loader-owned</text>
+  <rect class="state" x="744" y="204" width="66" height="46" rx="5"/>
+  <text class="small" x="750" y="232">state</text>
+  <rect class="live" x="814" y="204" width="186" height="46" rx="5"/>
+  <text class="label" x="824" y="224">live window</text>
+  <text class="small" x="824" y="241">no loader owns it</text>
+
+  <text class="small" x="544" y="290">the monitor serves every request from the live window</text>
+  <text class="small" x="544" y="306">and copies the code volume to 0x80800000 each start</text>
+
+  <rect class="live" x="544" y="320" width="456" height="66" rx="6"/>
+  <text class="label" x="558" y="344">a reset no longer undoes a write</text>
+  <text class="small" x="558" y="364">the loader restores the seed window, read only once;</text>
+  <text class="small" x="558" y="380">the live window keeps what the last cycle programmed.</text>
+
+  <text class="small" x="544" y="410">GWDT at 0x1c041000 resets a stalled guest, as the board does</text>
+  <text class="small" x="544" y="428">256-byte page programming, sector erase, optional part times</text>
+  <text class="small" x="544" y="446">trusted-only latch: an untrusted request is answered 0x0A</text>
+  <text class="small" x="544" y="464">a code-volume write is what the next boot executes</text>
+</svg>

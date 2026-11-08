@@ -23,11 +23,14 @@ Unsupported calls return errors. This is a compatibility subset, not an FF-A
 conformance implementation or a replacement for production Hafnium/TF-A.
 
 The real MM firmware implements UEFI variables. `nor.c` supplies its peer flash
-interface using a 1 MiB NOR variable partition at flash offset `0x03000000`.
-Reads, atomic 1-to-0 programming, aligned block erases and synchronous flushes
-operate on guest RAM backing at `0xa0000000`. The runner loads and atomically
-saves that backing in ignored `firmware/state/`. It never connects a physical
-flash device. No variable protocol is injected into UEFI.
+interface using a NOR variable partition at flash offset `0x03000000`, sized by
+`NOR_SIZE` (32 MiB default, 64 MiB for the board's part). Reads, atomic 1-to-0
+programming, aligned block erases and synchronous flushes operate on guest RAM
+backing at `0xa0000000`. The partition is behind the board's latch: command 8
+arms it for a trusted sender, and a non-trusted request is refused with status
+`0x0A` once it is armed. The runner loads and atomically saves that backing in
+ignored `firmware/state/`. It never connects a physical flash device. No
+variable protocol is injected into UEFI.
 
 A separate modeled clock service supplies the PMIC RTC register read requests
 and RTC set-time request used by the real UEFI clock driver. It starts at
