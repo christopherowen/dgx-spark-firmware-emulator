@@ -66,6 +66,9 @@ Additional bring-up interfaces are:
   PCIe fabric or a model of the physical GPU/NVMe/network topology.
 - Synthetic board and fuse configuration, including a one-CPU enable mask.
   Most fields and loader-cached board information remain zero placeholders.
+- An SBSA Generic Watchdog (`sbsa_gwdt`) mapped at refresh frame `0x1c041000`
+  and control frame `0x1c042000` with a 1 GHz clock and WS0 interrupt, matching
+  the board's GTDT addresses and resetting a stalled boot on second-stage expiry.
 
 The enlarged GIC also adjusts the CPU timer/PPI input base to match its SPI
 count. The lab monitor wakes the redistributor before entering UEFI. A
@@ -103,9 +106,10 @@ transport is inferred from the UEFI caller, not verified by live register
 transactions. The full boot runner explicitly enables this failure behavior.
 The older diagnostic runner can still select it with `--rot-error-replies`.
 
-The added configuration-bank state is for cold boot only; warm reset,
-migration and restoring QEMU snapshots are unsupported. Persistent emulated
-NOR is saved separately by the full boot runner.
+The added configuration-bank state is for cold boot only; migration and
+restoring QEMU snapshots are unsupported. Watchdog resets preserve the
+emulated flash through the monitor's dual seed/live NOR windows, and the full
+boot runner atomically saves the live window on exit.
 
 The patch modifies QEMU GPL-2.0-or-later source and is supplied under that
 license, with the original file copyright notices retained. The project's

@@ -2,14 +2,13 @@
 
 import hashlib
 import lzma
-import shutil
 import struct
 import unittest
 
 from types import SimpleNamespace
 
 from tools.boot_spark import apply_board_preset, usable_megabytes
-from tools.build_monitor import build_monitor
+from tools.build_monitor import build_monitor, has_llvm_tools
 from tools.handoff import diagnostic_boot_arguments
 from tools.spark_image import FMP_GUID, SOC_GUID, capsule_payload, unpack_uefi
 
@@ -105,8 +104,7 @@ class UsableMemoryTests(unittest.TestCase):
         self.assertEqual(usable_megabytes(1024), 0)
 
 
-@unittest.skipUnless(shutil.which("llvm-objcopy") and shutil.which("ld.lld"),
-                     "a monitor build needs the LLVM host tools on PATH")
+@unittest.skipUnless(has_llvm_tools(), "a monitor build needs the LLVM host tools")
 class MonitorTraceBuildTests(unittest.TestCase):
     def test_trace_build_is_a_different_binary(self):
         # The diagnostic build must actually differ: the flag reaches the compiler, not just

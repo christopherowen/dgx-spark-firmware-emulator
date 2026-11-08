@@ -6,9 +6,8 @@ TAG_SIZE = 0x1868
 TAG_MAGIC = 0x88610005
 
 NOR_SIZE = 0x2000000
-# The handoff tells SEC where RAM ends, and every region below stops here. A boot therefore gives
-# the firmware the same 1 GiB window (0x80000000..RAM_TOP) whatever -m allocates; RAM above this is
-# not described to the guest.
+# Default top of RAM described to SEC (1 GiB window at 0x80000000..0xC0000000 for -m 2G);
+# boot_arguments(..., ram_top=...) raises this ceiling when more RAM is allocated.
 RAM_TOP = 0xC0000000
 RAM_BASE = 0x80000000
 
@@ -19,8 +18,9 @@ BOOT_REGIONS = (
     ("MMAP_FREE_BASE_1", 0x88000000, 0xb3e0000, 1),
     ("MMAP_SECURE", 0x933e0000, 0xe60000, 0),
     ("MMAP_FREE_BASE_2", 0x94240000, 0xbdc0000, 1),
-    ("MMAP_NOR_BACKING", 0xa0000000, 0x2000000, 0),
-    ("MMAP_FREE_BASE_3", 0xa2000000, 0x1e000000, 1),
+    ("MMAP_NOR_BACKING", 0xa0000000, 2 * NOR_SIZE + 0x1000, 0),
+    ("MMAP_FREE_BASE_3", 0xa0000000 + 2 * NOR_SIZE + 0x1000,
+     RAM_TOP - (0xa0000000 + 2 * NOR_SIZE + 0x1000), 1),
 )
 
 DIAGNOSTIC_REGIONS = (

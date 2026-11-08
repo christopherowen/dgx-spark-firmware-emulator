@@ -163,6 +163,9 @@ def main() -> int:
             process.wait(timeout=20)
         except subprocess.TimeoutExpired:
             process.kill()
+        serial.close()
+        if arguments.out is not None:
+            shutil.rmtree(temporary, ignore_errors=True)
 
 
 if __name__ == "__main__":

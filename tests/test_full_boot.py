@@ -56,7 +56,7 @@ class MmPackageTests(unittest.TestCase):
         regions = [struct.unpack_from("<QQI", data, 0x80 + i * 56 + 32) for i in range(count)]
         self.assertEqual(count, 8)
         reserved = [(0x80000000, 0x80100000), (0x933e0000, 0x94240000),
-                    (0xa0000000, 0xa0100000)]
+                    (0xa0000000, 0xa4001000)]
         for base, size, flags in regions:
             if flags == 1:
                 for start, end in reserved:

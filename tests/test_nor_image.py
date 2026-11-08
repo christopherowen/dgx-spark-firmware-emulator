@@ -131,8 +131,9 @@ class NorImageTests(unittest.TestCase):
 
     def test_stage_never_overwrites_and_preserves_hash(self):
         source = self.write(image((entry("Setup", b"\x00"), b"")))
-        destination = Path(tempfile.mkdtemp()) / "staged.bin"
-        self.addCleanup(lambda: destination.unlink(missing_ok=True))
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        destination = Path(temporary.name) / "staged.bin"
         source_sha, staged_sha = stage(source, destination)
         self.assertEqual(source_sha, staged_sha)
         with self.assertRaisesRegex(ImageError, "refusing to overwrite"):

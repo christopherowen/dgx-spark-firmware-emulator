@@ -23,12 +23,19 @@ Unsupported calls return errors. This is a compatibility subset, not an FF-A
 conformance implementation or a replacement for production Hafnium/TF-A.
 
 The real MM firmware implements UEFI variables. `nor.c` supplies its peer flash
-interface using a NOR variable partition at flash offset `0x03000000`, sized by
-`NOR_SIZE` (32 MiB default, 64 MiB for the board's part). Reads, atomic 1-to-0
-programming, aligned block erases and synchronous flushes operate on guest RAM
-backing at `0xa0000000`. The partition is behind the board's latch: command 8
-arms it for a trusted sender, and a non-trusted request is refused with status
-`0x0A` once it is armed. The runner loads and atomically saves that backing in
+interface using a NOR variable partition at flash offset `0x03000000` (or `0x0`
+when booting a whole-device `--flash-image`), sized by `NOR_SIZE` (32 MiB
+default, 64 MiB for the board's part, 1 MiB for legacy fixtures). Because QEMU
+re-applies `-device loader` blobs on reset, `0xa0000000` holds the read-only
+seed window, `0xa0000000 + NOR_SIZE` holds a 4 KiB state page, and
+`0xa0000000 + NOR_SIZE + 0x1000` holds the live window that the monitor copies
+once on first boot and serves across resets. Reads, 256-byte page programming,
+4 KiB sector erases and synchronous flushes operate on that live window, with
+optional `NOR_WRITE_US` / `NOR_ERASE_US` delays; when `SPARK_CODE_OFFSET` is set,
+the monitor also copies the code volume from the live window to `0x80800000` on
+each reset. The partition is behind the board's latch: command 8 arms it for a
+trusted sender, and a non-trusted request is refused with status `0x0A` once it
+is armed. The runner loads the seed and atomically saves the live window in
 ignored `firmware/state/`. It never connects a physical flash device. No
 variable protocol is injected into UEFI.
 

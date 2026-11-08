@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from urllib.request import urlopen
@@ -13,6 +14,48 @@ import venv
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_URL = "https://github.com/qemu/qemu/archive/refs/tags/v11.1.2.tar.gz"
 SOURCE_SHA256 = "6c7f81c186854db82542f0d56f63fc1ecf84e5416cf9ca2eb00b99673d75d36c"
+SOURCE_GIT_URL = "https://github.com/qemu/qemu.git"
+SOURCE_TAG = "v11.1.2"
+SOURCE_COMMIT = "4fc49f46dc95d4a27de2509e7fceb2931e91faeb"
+SOURCE_TREE = "0e6dfe70f3ae7b3ffc985c183e9df1b7ae3df4de"
+
+
+def unpack_source(directory, archive, source):
+    if not archive.exists():
+        partial = archive.with_suffix(".partial")
+        try:
+            with urlopen(SOURCE_URL, timeout=60) as response, partial.open("wb") as output:
+                while chunk := response.read(1024 * 1024):
+                    output.write(chunk)
+            partial.replace(archive)
+        except OSError:
+            partial.unlink(missing_ok=True)
+    if archive.exists():
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != SOURCE_SHA256:
+            raise ValueError("QEMU source archive checksum mismatch")
+        source.mkdir()
+        subprocess.run(["tar", "-xzf", str(archive), "-C", str(source), "--strip-components=1"], check=True)
+        return
+    repo = directory / "qemu-git"
+    shutil.rmtree(repo, ignore_errors=True)
+    try:
+        subprocess.run(["git", "clone", "--depth", "1", "--branch", SOURCE_TAG, "--no-checkout",
+                        SOURCE_GIT_URL, str(repo)], check=True)
+        commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", f"{SOURCE_TAG}^{{commit}}"],
+                                         text=True).strip()
+        tree = subprocess.check_output(["git", "-C", str(repo), "rev-parse", f"{SOURCE_TAG}^{{tree}}"],
+                                       text=True).strip()
+        if (commit, tree) != (SOURCE_COMMIT, SOURCE_TREE):
+            raise ValueError(f"QEMU git tag verification mismatch: got {commit} / {tree}")
+        source.mkdir()
+        archive_proc = subprocess.Popen(["git", "-C", str(repo), "archive", "--format=tar", SOURCE_COMMIT],
+                                        stdout=subprocess.PIPE)
+        subprocess.run(["tar", "-xf", "-", "-C", str(source)], stdin=archive_proc.stdout, check=True)
+        archive_proc.stdout.close()
+        if archive_proc.wait() != 0:
+            raise subprocess.CalledProcessError(archive_proc.returncode, "git archive")
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
 
 
 def build(jobs):
@@ -25,24 +68,12 @@ def build(jobs):
         venv.create(host, with_pip=True)
         subprocess.run([str(host / "bin" / "python"), "-m", "pip", "install", "ninja==1.13.2"], check=True)
     archive = directory / "qemu-v11.1.2.tar.gz"
-    if not archive.exists():
-        partial = archive.with_suffix(".partial")
-        try:
-            with urlopen(SOURCE_URL, timeout=30) as response, partial.open("wb") as output:
-                while chunk := response.read(1024 * 1024):
-                    output.write(chunk)
-            partial.replace(archive)
-        finally:
-            partial.unlink(missing_ok=True)
-    if hashlib.sha256(archive.read_bytes()).hexdigest() != SOURCE_SHA256:
-        raise ValueError("QEMU source archive checksum mismatch")
     source = directory / "qemu-src"
     patch = ROOT / "qemu" / "patches" / "0001-spark-fw-address-profile.patch"
     stamp = source / ".spark-patch-sha256"
     patch_hash = hashlib.sha256(patch.read_bytes()).hexdigest()
     if not source.exists():
-        source.mkdir()
-        subprocess.run(["tar", "-xzf", str(archive), "-C", str(source), "--strip-components=1"], check=True)
+        unpack_source(directory, archive, source)
     if not stamp.exists():
         # Apply as a standalone source tree. Otherwise Git can discover the
         # parent lab repository and silently skip newly added files in build/.

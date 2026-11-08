@@ -120,9 +120,11 @@ GICv4 and 20 CPUs; the lab uses GICv3 and one CPU. The inventoried hardware ran
 SoC 2.155.11, a different revision from the emulated update.
 
 There is no full GB10/MT8901 implementation, GPU, physical-device passthrough,
-secure stage-2 isolation, production secure boot, firmware flashing, warm
-reset or migration support. Use a fresh QEMU process per cold boot. Reaching
-setup establishes UEFI boot, not execution of every component in the SoC image.
+secure stage-2 isolation, production secure boot, firmware flashing, or
+migration support. Watchdog resets (`--gwdt-timeout-ms`, `--stop-after-boots`)
+preserve live flash state and code edits across reboot cycles within a run;
+otherwise use a fresh QEMU process per cold boot. Reaching setup establishes
+UEFI boot, not execution of every component in the SoC image.
 
 The older `run_spark.py` diagnostic deliberately omits the monitor/MM package.
 It remains useful for SEC/DXE entry checks and explicit failure scenarios;

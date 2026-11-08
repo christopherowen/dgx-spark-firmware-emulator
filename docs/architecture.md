@@ -83,6 +83,8 @@ out of the flash would be frozen at the moment the run started; the monitor inst
 region out of the live window on every start, and a code byte the firmware programmed is what the
 next boot executes.
 
+![Flash windows across reset](flash-windows.svg)
+
 It is not a GB10. The GPIO/EINT banks, the UART and the RTL8168 model are approximations for the
 paths they are used on; there is no SPI controller in the normal world (the board's belongs to the
 Flash Service partition), one CPU instead of twenty, and one gigabyte of DRAM instead of a board-class memory — the profile aliases PCI BAR space over the lowest gigabyte, and the loader tag describes the rest of the allocation, so `--memory` beyond 2 GiB adds usable RAM rather than hidden RAM. Each

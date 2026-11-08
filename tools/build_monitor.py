@@ -13,10 +13,20 @@ def find_tool(name):
     result = shutil.which(name)
     if result:
         return result
-    for directory in (Path("/opt/homebrew/opt/llvm/bin"), Path("/usr/local/opt/llvm/bin")):
+    for directory in (Path("/opt/homebrew/opt/llvm/bin"), Path("/usr/local/opt/llvm/bin"),
+                      Path("/opt/homebrew/opt/lld/bin"), Path("/usr/local/opt/lld/bin")):
         if (directory / name).is_file():
             return str(directory / name)
     raise ValueError(f"install LLVM/Clang and LLD; required tool not found: {name}")
+
+
+def has_llvm_tools(*names):
+    try:
+        for name in (names or ("clang", "ld.lld", "llvm-objcopy")):
+            find_tool(name)
+        return True
+    except ValueError:
+        return False
 
 
 POLICIES = {"armed": [], "open": ["-DSPARK_NOR_POLICY_OPEN"]}

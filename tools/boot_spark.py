@@ -739,7 +739,7 @@ def main():
                              "the packet proof fails; the default is to fail the run")
     parser.add_argument("--pxe-image", type=Path,
                         help="serve this EFI application over the PXE path instead of the "
-                             "built-in probe; implies the PXE test run mode")
+                             "built-in probe; requires --pxe-test and --pxe-marker")
     parser.add_argument("--gdb", type=int, metavar="PORT",
                         help="diagnostic: hold the CPU at reset and expose a GDB stub on PORT")
     parser.add_argument("--board", action="store_true",
@@ -783,7 +783,8 @@ def main():
             if args.foreign_nor:
                 raise ValueError("--flash-image and --foreign-nor are different sources")
             state = args.flash_image
-            args.nor_size = state.stat().st_size
+            if not state.is_file():
+                raise ValueError(f"flash image not found: {state}")
             nor_offset = 0
             # No preset ran: an omitted --code-offset means the device starts with the boot image,
             # which is the store-only layout's behaviour.
@@ -792,6 +793,9 @@ def main():
             nor_offset = 0x3000000
             code_offset = None
         args.nor_size = resolve_nor_size(state, args.nor_size)
+        if args.flash_image is not None and state.stat().st_size != args.nor_size:
+            raise ValueError(
+                f"{state} is {state.stat().st_size:#x} bytes, not the modelled {args.nor_size:#x}")
         if args.smp not in (None, 1):
             raise ValueError("the spark-fw-lab machine enforces one CPU; --smp cannot exceed 1")
         if args.memory is not None:

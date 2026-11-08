@@ -7,11 +7,12 @@ and the probes can be rebuilt or audited from the tree.
 
 import os
 from pathlib import Path
-import shutil
 import struct
 import subprocess
 import tempfile
 import unittest
+
+from tools.build_monitor import find_tool, has_llvm_tools
 
 
 
@@ -165,8 +166,7 @@ class ProfileIntegrationTests(unittest.TestCase):
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
-@unittest.skipUnless(shutil.which("clang") and shutil.which("ld.lld") and shutil.which("llvm-objcopy"),
-                     "rebuilding a probe needs the LLVM host tools")
+@unittest.skipUnless(has_llvm_tools(), "rebuilding a probe needs the LLVM host tools")
 class ProbeSourceTests(unittest.TestCase):
     """The instruction words above must match the sources in `tests/fixtures/`.
 
@@ -179,10 +179,10 @@ class ProbeSourceTests(unittest.TestCase):
             work = Path(directory)
             obj, elf, binary = work / "p.o", work / "p.elf", work / "p.bin"
             for command in (
-                ["clang", "--target=aarch64-none-elf", "-O2", "-ffreestanding", "-fno-builtin",
-                 "-nostdlib", "-c", str(FIXTURES / source), "-o", str(obj)],
-                ["ld.lld", "-Ttext=0x80000000", "-e", "_start", str(obj), "-o", str(elf)],
-                ["llvm-objcopy", "-O", "binary", str(elf), str(binary)],
+                [find_tool("clang"), "--target=aarch64-none-elf", "-O2", "-ffreestanding",
+                 "-fno-builtin", "-nostdlib", "-c", str(FIXTURES / source), "-o", str(obj)],
+                [find_tool("ld.lld"), "-Ttext=0x80000000", "-e", "_start", str(obj), "-o", str(elf)],
+                [find_tool("llvm-objcopy"), "-O", "binary", str(elf), str(binary)],
             ):
                 subprocess.run(command, check=True, capture_output=True)
             data = binary.read_bytes()

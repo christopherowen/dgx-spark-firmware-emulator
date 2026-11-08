@@ -100,6 +100,19 @@ class NorSizeTest(unittest.TestCase):
         self.assertIn("must be one of", result.stderr)
         self.assertNotIn("Traceback", result.stderr + result.stdout)
 
+    def test_board_and_nor_size_reject_mismatched_flash_image(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            half = Path(directory) / "half.bin"
+            half.write_bytes(b"\xff" * 0x2000000)
+            for flags in (["--board", "--flash-image", str(half)],
+                          ["--nor-size", "0x4000000", "--flash-image", str(half)],
+                          ["--flash-image", str(Path(directory) / "missing.bin")]):
+                result = subprocess.run([sys.executable, "tools/boot_spark.py", "--smoke-test", *flags],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1)
+                self.assertNotIn("Traceback", result.stderr + result.stdout)
+
     def test_a_marker_only_pxe_run_never_claims_a_transfer(self):
         from tools.boot_spark import RunMode, result_value
         self.assertEqual(result_value(RunMode.PXE_TEST, True),
