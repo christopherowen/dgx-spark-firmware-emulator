@@ -96,8 +96,9 @@ static int ns_rx_full, sp_rx_full;
 /* Lab RAM only. Monitor stacks and the NOR backing are never message buffers. */
 static int guest_buffer(u64 address, u64 size) {
     return size && address >= 0x80100000UL && size <= 0x3ff00000UL &&
-           address <= 0xc0000000UL - size &&
-           (address + size <= 0xa0000000UL || address >= 0xa0100000UL);
+           address <= RAM_TOP - size &&
+           (address + size <= 0xa0000000UL ||
+            address >= NOR_SEED_BASE + 2 * NOR_SIZE + NOR_BLOCK);
 }
 
 extern void enter(u64 ignored, u64 arg0);
@@ -186,7 +187,44 @@ static void yield(u64 *r, int response) {
                      : "+r"(x0), "+r"(x1)::"x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10",
                        "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
 }
+static void nor_window_seed(void);
+
+/* In whole-device mode the boot image lives inside the flash: the harness slices it out of the image
+ * for the first load, but the loader replays that file on every reset, so without this copy a code
+ * byte the firmware programmed would be visible to the first boot and then silently reverted. Copy it
+ * out of the live window each time the monitor starts, before the non-secure world runs. */
+static void code_from_flash(void) {
+#ifdef SPARK_CODE_OFFSET
+#if SPARK_CODE_OFFSET + SPARK_CODE_SIZE > NOR_SIZE
+#error "the boot image must fit inside the modelled part"
+#endif
+    const unsigned char *source = (const unsigned char *)NOR_LIVE_BASE + SPARK_CODE_OFFSET;
+    unsigned char *destination = (unsigned char *)0x80800000UL;
+    unsigned long words = SPARK_CODE_SIZE / 8, tail = SPARK_CODE_SIZE % 8, i;
+    for (i = 0; i < words; i++)
+        ((unsigned long long *)destination)[i] = ((const unsigned long long *)source)[i];
+    for (i = words * 8; i < words * 8 + tail; i++)
+        destination[i] = source[i];
+#endif
+}
+
 void boot(void) {
+#ifdef SPARK_NOR_POLICY_OPEN
+    nor_set_policy_armed(0);
+#endif
+#ifdef SPARK_GWDT_TIMEOUT_MS
+    /* A board BL31 hands the non-secure world a watchdog that already carries a timeout, so the
+     * firmware's own "enable" (WCS=1, no WOR write) starts a real interval rather than a
+     * zero-length one. Arm WOR here and leave WCS clear: enabling stays the firmware's decision.
+     */
+    {
+        unsigned long long ticks = (unsigned long long)SPARK_GWDT_TIMEOUT_MS * 1000000ULL;
+        *(volatile u32 *)(0x1c042000UL + 0x08) = (u32)ticks;
+        *(volatile u32 *)(0x1c042000UL + 0x0c) = (u32)(ticks >> 32);
+    }
+#endif
+    nor_window_seed();
+    code_from_flash();
     console_puts("\nMON: boot STMM\n");
     *(volatile u32 *)0x06880014 = 0;
     WRITE(SCR_EL3, SCR);
@@ -213,7 +251,41 @@ static void logcall(u64 *r, u64 level, u64 esr) {
     }
     console_puts("\n");
 }
-static u64 rtc_seconds = 946684800, rtc_counter;
+/* The RTC the firmware reads starts at the base the harness pins, so two runs that were told to
+ * share a clock really do: -DRTC_BASE carries --rtc-base through to this service. */
+#ifndef RTC_BASE
+#define RTC_BASE 946684800UL
+#endif
+/* Seed the live window from the loader's copy, once per machine.
+ *
+ * The latch alone would not be enough: it lives in RAM the guest can write, so a guest that cleared it
+ * could force a re-seed from the loader's copy — which QEMU restores on every reset — and silently
+ * discard the flash it had already programmed. The window is therefore also required to look
+ * uninitialised: QEMU hands a fresh machine zeroed RAM, and an erased part reads 0xff. A guest that wants the seed to run has to erase the
+ * whole live window first, which is a power it already has through the flash service. */
+static int nor_window_blank(const unsigned char *window) {
+    /* Uniform, not "each byte is 0x00 or 0xff": a window holding a programmed zero among erased
+     * bytes is a part with something written on it, and seeding over that would undo the write. */
+    unsigned char first = window[0];
+    if (first != 0xff && first != 0x00)
+        return 0;
+    for (unsigned long i = 1; i < NOR_SIZE; i++)
+        if (window[i] != first)
+            return 0;
+    return 1;
+}
+
+static void nor_window_seed(void) {
+    u64 *state = (u64 *)NOR_STATE_BASE;
+    unsigned char *seed = (unsigned char *)NOR_SEED_BASE, *live = (unsigned char *)NOR_LIVE_BASE;
+    if (*state == NOR_SEEDED || !nor_window_blank(live))
+        return;
+    for (unsigned long i = 0; i < NOR_SIZE; i++)
+        live[i] = seed[i];
+    *state = NOR_SEEDED;
+}
+
+static u64 rtc_seconds = RTC_BASE, rtc_counter;
 static unsigned bcd(unsigned value) { return ((value / 10) << 4) | (value % 10); }
 static unsigned unbcd(unsigned value) { return (value >> 4) * 10 + (value & 15); }
 static unsigned days_in_month(unsigned y, unsigned m) {
@@ -330,6 +402,20 @@ void handle(u64 *r, u64 level) {
     u64 esr = level == 3 ? READ(ESR_EL3) : READ(ESR_EL2);
     u32 fid = r[0];
     int ns = level == 3 && (READ(SCR_EL3) & 1);
+#ifdef MONITOR_TRACE
+    if (esr >> 26 == 0x17 || esr >> 26 == 0x16) {
+        console_puts("\nSMC fid=");
+        hex(fid);
+        console_puts(" ns=");
+        hex(ns);
+        console_puts(" a1=");
+        hex(r[1]);
+        console_puts(" a2=");
+        hex(r[2]);
+        console_puts(" elr=");
+        hex(level == 3 ? READ(ELR_EL3) : READ(ELR_EL2));
+    }
+#endif
     if (fid == 0xc400008a && esr >> 26 == 0x16) {
         u64 n = r[1];
         if (n > 48)
@@ -530,11 +616,13 @@ void handle(u64 *r, u64 level) {
     }
     if (fid == DIRECT_REQ && (r[1] & 0xffff) == 0x8002) {
         unsigned char *b = (unsigned char *)shared_address;
-        if (ns || r[1] != 0x80048002 || !shared_address || r[3] != 1 || r[4] != shared_size) {
+        if (r[1] != 0x80048002 || !shared_address || r[3] != 1 || r[4] != shared_size) {
             unsupported(r);
             return;
         }
-        if (!nor_request((unsigned char *)0xa0000000UL, NOR_SIZE, b, shared_size)) {
+        /* Both worlds reach the service; the policy, not the transport,
+         * decides dispatch. The board answers a denied request with 0x0A. */
+        if (!nor_request((unsigned char *)NOR_LIVE_BASE, NOR_SIZE, b, shared_size, !ns)) {
             unsupported(r);
             return;
         }
@@ -609,6 +697,17 @@ void handle(u64 *r, u64 level) {
         restore(&secure_context, r);
         return;
     }
+#ifdef SPARK_ACCEPT_MMAP_NOTIFY
+    /* Experimental: the firmware's memory-map describer sends non-secure DRAM regions here
+     * (0xc4000122). A BL31 on the board would almost certainly accept the notification; this
+     * build does, so a boot can be compared against the default NOT_SUPPORTED answer. The
+     * notification is not stored anywhere: this monitor enforces no isolation.
+     */
+    if (fid == 0xc4000122 && ns) {
+        success(r);
+        return;
+    }
+#endif
     if ((fid & 0xffff) >= 0x60 && (fid & 0xffff) <= 0x8f)
         unsupported(r);
     else

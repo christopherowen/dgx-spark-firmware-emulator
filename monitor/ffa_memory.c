@@ -2,6 +2,7 @@
  * Original bounded FF-A memory-sharing model; no vendor code or data.
  */
 #include "ffa_memory.h"
+#include "nor.h"
 
 typedef unsigned long u64;
 typedef unsigned int u32;
@@ -12,9 +13,10 @@ typedef unsigned short u16;
  */
 int ffa_ns_buffer(u64 address, u64 size) {
     return size && address >= 0x80100000UL && size <= 0x3ff00000UL &&
-           address <= 0xc0000000UL - size &&
+           address <= RAM_TOP - size &&
            (address + size <= 0x93400000UL || address >= 0x94240000UL) &&
-           (address + size <= 0xa0000000UL || address >= 0xa0100000UL);
+           (address + size <= 0xa0000000UL ||
+            address >= NOR_SEED_BASE + 2 * NOR_SIZE + NOR_BLOCK);
 }
 
 static int permissions(unsigned value) {
