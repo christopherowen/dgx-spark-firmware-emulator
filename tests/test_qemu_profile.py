@@ -1,13 +1,60 @@
-"""Run an original synthetic AArch64 probe against the built QEMU profile."""
+"""Run an original synthetic AArch64 probe against the built QEMU profile.
+
+Each test carries instruction words produced from the matching source in `tests/fixtures/`
+(gwdt_probe.c, ecam_probe.c, gpio_probe.c, ramwindow.c), so the tests need no toolchain to run
+and the probes can be rebuilt or audited from the tree.
+"""
 
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import tempfile
 import unittest
 
 
+
+GPIO_ALIAS_WORDS = [
+    0xd29a6000, 0xf2a20040, 0x52824681, 0xb9000001,
+    0x52800021, 0xb9000401, 0x52800081, 0xb9000801,
+    0xb9400001, 0x52824622, 0x6b02003f, 0x54000161,
+    0xd29ffd00, 0xf2a0d000, 0xb9400001, 0x53041c21,
+    0x71000c3f, 0x540000a1, 0xd2a2d400, 0x52800a01,
+    0xb9000001, 0x14000000, 0xd2a2d400, 0x528008c1,
+    0xb9000001, 0x17fffffc,
+]
+
+GWDT_WORDS = [
+    0x52840108, 0x52994009, 0x72a38088, 0x72a77349,
+    0xb9000109, 0xb940010a, 0xb85f8108, 0x7100011f,
+    0x528008c8, 0x7a490140, 0x52800a09, 0x1a880128,
+    0x52a2d409, 0xb9000128, 0x14000000,
+]
+
+ECAM_WORDS = [
+    0xd2c01e68, 0x529fffe9, 0xb9400108, 0x6a28013f,
+    0x52800a08, 0x528009c9, 0x1a880128, 0x52a2d409,
+    0xb9000128, 0x14000000,
+]
+
+GPIO_WINDOW_WORDS = [
+    0x529a0008, 0x52a24889, 0x72a20048, 0xb940011f,
+    0x52a248c8, 0xb940013f, 0x52a25069, 0xb940011f,
+    0x52a250a8, 0xb940013f, 0xb940011f, 0x52a250e8,
+    0x52a25129, 0xb940011f, 0x52a25168, 0xb940013f,
+    0xb940011f, 0x52a254a8, 0x52a25c69, 0xb940011f,
+    0x52a26c68, 0xb940013f, 0xb940011f, 0x52a2d408,
+    0x52800a09, 0xb9000109, 0x14000000,
+]
+
+RAMWINDOW_WORDS = [
+    0x529fff08, 0x52848d09, 0x52826aeb, 0x72b7ffe8,
+    0x72a26ae9, 0x52a8002a, 0xb9000109, 0x72a48d0b,
+    0xb9400108, 0xb900014b, 0xb940014a, 0x6b0b015f,
+    0x7a491100, 0x528008c8, 0x52800a09, 0x1a880128,
+    0x52a2d409, 0xb9000128, 0x14000000,
+]
 @unittest.skipUnless(os.environ.get("SPARK_QEMU"), "set SPARK_QEMU to test the custom QEMU build")
 class ProfileIntegrationTests(unittest.TestCase):
     def probe(self, words, *, rot_error_replies=False):
@@ -25,22 +72,22 @@ class ProfileIntegrationTests(unittest.TestCase):
             try:
                 result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, timeout=2, check=False)
-                self.fail(f"probe unexpectedly exited: {result.stdout!r}")
-            except subprocess.TimeoutExpired as result:
-                self.assertEqual(result.output, b"P")
+            except subprocess.TimeoutExpired as timed_out:
+                self.assertEqual(timed_out.output, b"P")
+                return
+            # QEMU exited instead of running for the whole window. On a shared host the usual cause
+            # is that it could not get the machine's memory, which is not a profile regression.
+            message = (result.stdout or b"").decode("utf-8", "replace")
+            if "Cannot allocate memory" in message or "failed to allocate" in message:
+                self.skipTest("the host could not allocate the machine's memory")
+            self.fail(f"probe unexpectedly exited: {result.stdout!r}")
 
     def test_gpio_aliases_gicv3_id_and_16550_serial_at_spark_addresses(self):
         # Original probe: exercise GPIO readback, SET, and CLEAR aliases,
         # read GICD_PIDR2 at 0x0680ffe8, require architecture 3,
         # then write P (pass) or F (failure) to the 16550 at 0x16a00000.
         # These are our own assembled instructions, not vendor firmware bytes.
-        words = [0xd29a6000, 0xf2a20040, 0x52824681, 0xb9000001,
-                 0x52800021, 0xb9000401, 0x52800081, 0xb9000801,
-                 0xb9400001, 0x52824622, 0x6b02003f, 0x54000161,
-                 0xd29ffd00, 0xf2a0d000, 0xb9400001, 0x53041c21,
-                 0x71000c3f, 0x540000a1, 0xd2a2d400, 0x52800a01,
-                 0xb9000001, 0x14000000, 0xd2a2d400, 0x528008c1,
-                 0xb9000001, 0x17fffffc]
+        words = GPIO_ALIAS_WORDS
         self.probe(words)
 
     def test_uart_interrupt_uses_spcr_gsi_878(self):
@@ -66,6 +113,37 @@ class ProfileIntegrationTests(unittest.TestCase):
                     0x52800a01, 0xb9000001, 0x14000000, 0xd2a2d400,
                     0x528008c1, 0xb9000001, 0x17fffffc])
 
+
+    def test_gwdt_is_mapped_at_the_board_addresses_and_writable(self):
+        # Original probe: write WOR in the control frame at 0x1c042000, read it back, read WCS (must
+        # still be clear because the probe never enables it), then print P. Proves the profile still
+        # places the board's watchdog where the firmware looks for it.
+        words = GWDT_WORDS
+        self.probe(words)
+
+
+    def test_ecam_window_is_mapped_at_the_board_base(self):
+        # Original probe: read the vendor id of 0000:00:00.0 through ECAM at 0xf300000000 and print P
+        # when a device answers; a plain virt machine faults at that address before printing anything,
+        # so P proves the window is mapped and populated on this profile.
+        words = ECAM_WORDS
+        self.probe(words)
+
+
+    def test_every_gpio_config_window_is_present(self):
+        # Original probe: read the first register of all eleven GPIO config windows the profile adds.
+        # A missing window faults before any output, so P means every one of them is mapped.
+        words = GPIO_WINDOW_WORDS
+        self.probe(words)
+
+
+    def test_dram_window_is_the_upper_gigabyte_only(self):
+        # Original probe: at -m 2G the guest sees RAM at 0x80000000..0xBFFFFFFF only, because the
+        # profile aliases PCI BAR space over 0x40000000..0x7FFFFFFF. P requires both: the top of that
+        # gigabyte is writable, and the aliased window is not.
+        words = RAMWINDOW_WORDS
+        self.probe(words)
+
     def test_rot_failure_transport_never_returns_service_success(self):
         # Own instructions: require TX-ready, send 0x129 + one payload word,
         # check ACK and RX pending/W1C behavior and reply 0x1029 (status 1,
@@ -82,3 +160,39 @@ class ProfileIntegrationTests(unittest.TestCase):
                     0x540000a1, 0xd2a2d400, 0x52800a01, 0xb9000001,
                     0x14000000, 0xd2a2d400, 0x528008c1, 0xb9000001,
                     0x17fffffc], rot_error_replies=True)
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+@unittest.skipUnless(shutil.which("clang") and shutil.which("ld.lld") and shutil.which("llvm-objcopy"),
+                     "rebuilding a probe needs the LLVM host tools")
+class ProbeSourceTests(unittest.TestCase):
+    """The instruction words above must match the sources in `tests/fixtures/`.
+
+    The words are embedded so the profile tests run without a toolchain; this class is the other
+    half of that bargain, rebuilding each probe and failing if source and words have drifted.
+    """
+
+    def words_from(self, source: str) -> list[int]:
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            obj, elf, binary = work / "p.o", work / "p.elf", work / "p.bin"
+            for command in (
+                ["clang", "--target=aarch64-none-elf", "-O2", "-ffreestanding", "-fno-builtin",
+                 "-nostdlib", "-c", str(FIXTURES / source), "-o", str(obj)],
+                ["ld.lld", "-Ttext=0x80000000", "-e", "_start", str(obj), "-o", str(elf)],
+                ["llvm-objcopy", "-O", "binary", str(elf), str(binary)],
+            ):
+                subprocess.run(command, check=True, capture_output=True)
+            data = binary.read_bytes()
+        return list(struct.unpack("<%dI" % (len(data) // 4), data))
+
+    def test_probe_words_match_their_sources(self):
+        for source, words in (("gwdt_probe.c", GWDT_WORDS),
+                              ("ecam_probe.c", ECAM_WORDS),
+                              ("gpio_probe.c", GPIO_WINDOW_WORDS),
+                              ("ramwindow.c", RAMWINDOW_WORDS)):
+            with self.subTest(source=source):
+                self.assertEqual(self.words_from(source), list(words),
+                                 f"{source} no longer assembles to the words the test uses")

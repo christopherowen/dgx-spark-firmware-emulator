@@ -131,7 +131,8 @@ class FfaMemoryTests(unittest.TestCase):
         self.assertEqual(self.share(d), -6)
         for address, pages in [(0, 1), (0x80020000, 1), (0x93400000, 1),
                                (0x93a40000, 1), (0x9423f000, 2),
-                               (0x933ff000, 2), (0xa0000000, 1), (0x9ffff000, 2),
+                               (0x933ff000, 2), (0xa0000000, 1), (0xa0100000, 1),
+                               (0xa1fff000, 1), (0x9ffff000, 2),
                                (0xbffff000, 2), (0xfffffffffffff000, 2)]:
             with self.subTest(address=hex(address), pages=pages):
                 self.assertEqual(self.share(self.descriptor(address, pages)), -6)
@@ -139,7 +140,7 @@ class FfaMemoryTests(unittest.TestCase):
 
     def test_fixed_manifest_ns_buffer_and_ram_boundary_are_allowed(self):
         for address, pages in [(0x933e0000, 32), (0x933ff000, 1), (0x94240000, 1),
-                               (0xa0100000, 1), (0xbffff000, 1)]:
+                               (0xa4001000, 1), (0xbffff000, 1)]:
             with self.subTest(address=hex(address)):
                 self.assertEqual(self.share(self.descriptor(address, pages)), 0)
                 self.assertEqual(self.reclaim(), 0)

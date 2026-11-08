@@ -2,9 +2,14 @@
 
 import hashlib
 import lzma
+import shutil
 import struct
 import unittest
 
+from types import SimpleNamespace
+
+from tools.boot_spark import apply_board_preset, usable_megabytes
+from tools.build_monitor import build_monitor
 from tools.handoff import diagnostic_boot_arguments
 from tools.spark_image import FMP_GUID, SOC_GUID, capsule_payload, unpack_uefi
 
@@ -49,3 +54,83 @@ class BootInputTests(unittest.TestCase):
             unpack_uefi(payload, "0" * 64)
         with self.assertRaises(ValueError):
             unpack_uefi(payload[:65], digest)
+
+
+class BoardPresetTests(unittest.TestCase):
+    def preset(self, **fields):
+        base = dict(flash_image=object(), code_offset=None, nor_size=None,
+                    write_us=None, erase_us=None)
+        base.update(fields)
+        return SimpleNamespace(**base)
+
+    def test_preset_fills_the_whole_device_defaults(self):
+        arguments = self.preset()
+        apply_board_preset(arguments)
+        self.assertEqual(arguments.code_offset, 0x2000000)
+        self.assertEqual(arguments.nor_size, 0x4000000)
+        self.assertEqual(arguments.write_us, 400)
+        self.assertEqual(arguments.erase_us, 40000)
+
+    def test_preset_leaves_an_explicit_zero_code_offset_alone(self):
+        # Zero is a valid offset (the boot image at the start of the device), so the preset must
+        # treat only "unset" as its own.
+        arguments = self.preset(code_offset=0)
+        apply_board_preset(arguments)
+        self.assertEqual(arguments.code_offset, 0)
+
+    def test_preset_keeps_what_the_caller_chose(self):
+        arguments = self.preset(code_offset=0x1000, nor_size=0x2000000,
+                                write_us=0, erase_us=7)
+        apply_board_preset(arguments)
+        self.assertEqual(arguments.code_offset, 0x1000)
+        self.assertEqual(arguments.nor_size, 0x2000000)
+        self.assertEqual(arguments.write_us, 0)
+        self.assertEqual(arguments.erase_us, 7)
+
+    def test_preset_needs_a_flash_image(self):
+        with self.assertRaises(ValueError):
+            apply_board_preset(self.preset(flash_image=None))
+
+
+class UsableMemoryTests(unittest.TestCase):
+    def test_usable_ram_follows_the_allocation_through_the_profile(self):
+        # QEMU allocates from 0x40000000 and the profile aliases the low gigabyte to PCI BAR space,
+        # so the guest's RAM starts at 0x80000000 and the handoff now describes it up to the end of
+        # the allocation, capped at 4 GiB to stay clear of the machine's high MMIO windows.
+        self.assertEqual(usable_megabytes(2048), 1024)   # 0x80000000..0xC0000000
+        self.assertEqual(usable_megabytes(3072), 2048)   # ..0x100000000
+        self.assertEqual(usable_megabytes(4096), 2048)   # capped at the 4 GiB mark
+        self.assertEqual(usable_megabytes(131072), 2048) # the cap, not the board's 128 GB
+        self.assertEqual(usable_megabytes(1536), 512)
+        self.assertEqual(usable_megabytes(1024), 0)
+
+
+@unittest.skipUnless(shutil.which("llvm-objcopy") and shutil.which("ld.lld"),
+                     "a monitor build needs the LLVM host tools on PATH")
+class MonitorTraceBuildTests(unittest.TestCase):
+    def test_trace_build_is_a_different_binary(self):
+        # The diagnostic build must actually differ: the flag reaches the compiler, not just
+        # the directory name.
+        plain = build_monitor(nor_size=0x4000000, nor_offset=0, trace=False)
+        traced = build_monitor(nor_size=0x4000000, nor_offset=0, trace=True)
+        self.assertNotEqual(plain, traced)
+        self.assertIn("flashlog", traced.name)
+        self.assertNotEqual(plain.read_bytes(), traced.read_bytes())
+
+    def test_rebuilding_the_same_monitor_gives_the_same_bytes(self):
+        # run.json records monitor_sha256 as evidence of which model produced a result; that only
+        # means something if the same source rebuilds to the same bytes. The first build's bytes
+        # are read before the second runs: both builds share one path, so reading afterwards would
+        # compare the second build with itself and pass for any compiler.
+        first = build_monitor(nor_size=0x4000000, nor_offset=0)
+        first_bytes = first.read_bytes()
+        self.assertEqual(build_monitor(nor_size=0x4000000, nor_offset=0), first)
+        self.assertEqual(first_bytes, first.read_bytes())
+
+    def test_mmap_notify_build_is_a_different_binary(self):
+        # The opt-in service answer must reach the compiler too: it is the only thing that makes
+        # the "measured inert" comparison a comparison.
+        plain = build_monitor(nor_size=0x4000000, nor_offset=0)
+        accepting = build_monitor(nor_size=0x4000000, nor_offset=0, accept_mmap_notify=True)
+        self.assertIn("mmapok", accepting.name)
+        self.assertNotEqual(plain.read_bytes(), accepting.read_bytes())
