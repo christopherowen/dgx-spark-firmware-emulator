@@ -16,8 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.boot_spark import local_path
 from tools.build_monitor import build_monitor, find_tool
-from tools.handoff import boot_arguments
+from tools.handoff import NOR_SIZE, boot_arguments
 from tools.prepare_mm import prepare_mm, MM_SHA256
+from tools.spark_image import DEFAULT_VERSION
 from tools.qemu_control import GdbRemote, connect_unix
 
 
@@ -38,11 +39,11 @@ def build_probe(directory):
     return binary
 
 
-def run(qemu, timeout):
+def run(qemu, timeout, nor_size=NOR_SIZE):
     qemu = shutil.which(qemu)
     if qemu is None:
         raise ValueError("build the Spark QEMU profile first: python3 tools/build_qemu.py")
-    monitor, package = build_monitor(), prepare_mm()
+    monitor, package = build_monitor(nor_size=nor_size), prepare_mm()
     # The pinned package has one HVC instruction. Observe it with an execution
     # breakpoint; never patch the image, its checks or its return registers.
     image = package.read_bytes()
@@ -56,10 +57,10 @@ def run(qemu, timeout):
     directory.mkdir(parents=True)
     probe = build_probe(directory)
     handoff, nor = [local_path(directory / name) for name in ("bootargs.bin", "nor.bin")]
-    handoff.write_bytes(boot_arguments())
-    nor.write_bytes(b"\xff" * 0x100000)
+    handoff.write_bytes(boot_arguments(nor_size))
+    nor.write_bytes(b"\xff" * nor_size)
     nor.chmod(0o600)
-    record = {"mm_sha256": MM_SHA256, "firmware_modified": False,
+    record = {"mm_sha256": MM_SHA256[DEFAULT_VERSION], "firmware_modified": False,
               "monitor_sha256": hashlib.sha256(monitor.read_bytes()).hexdigest(),
               "probe_sha256": hashlib.sha256(probe.read_bytes()).hexdigest(),
               "firmware_hvc_address": hex(breakpoint)}
@@ -135,11 +136,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qemu", default=str(ROOT / "build/qemu-spark/qemu-system-aarch64"))
     parser.add_argument("--timeout", type=int, default=15)
+    parser.add_argument("--nor-size", type=lambda v: int(v, 0), default=NOR_SIZE,
+                        help="flash size the probe reserves (default 0x2000000)")
     args = parser.parse_args()
     if not 5 <= args.timeout <= 60:
         parser.error("timeout must be between 5 and 60 seconds")
     try:
-        directory = run(args.qemu, args.timeout)
+        directory = run(args.qemu, args.timeout, args.nor_size)
         print(f"Unchanged STMM buffer checks verified. Local evidence: {directory}")
     except (OSError, ValueError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
         print(f"error: {error}", file=sys.stderr)

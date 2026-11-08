@@ -15,14 +15,44 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.download_firmware import download, require_ignored_untracked
 
-VERSION = "2.158.15"
-CAB_SHA256 = "f895952896ffed39fc167de0f86eab40609b5baf9debcf12caa720123a915416"
+# Every release we can prepare, keyed by SoC version. `capsule` and `uefi` are
+# None until first extracted; fill them in from the printed hashes so an image is
+# always checked against a pinned value afterwards.
+VERSIONS = {
+    "2.158.15": {                                   # LVFS 152274, our reproduction build
+        "cab": "f895952896ffed39fc167de0f86eab40609b5baf9debcf12caa720123a915416",
+        "capsule": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78",
+        "uefi": "568ff181d47fbfd31504a22d6e42975db77b99b02c07fe5c76823b484441e645",
+    },
+    "4.1.0": {                                      # newest archived release, combined image
+        "cab": "9e48bcdd45f53d98e9ad52a3ee86ea769fc499467ebcb3f592911c0d09d0e050",
+        "capsule": "87a26583741422bdcc4f7d0cb9305bbe3bba0408bbc573cd80949e688fc3b5b9",
+        "uefi": "e8dc43f51d0eecac1717dd7cef53f29bbffe6a92c0737aff094dbed5df131999",
+    },
+    "2.155.11": {                                   # LVFS 143466, the release the board was running
+        "cab": "35e2452645affc35365ee66259d82908d441283f61a16b8305593bcff3e505b1",
+        "capsule": "0985b848b1708421a399935b7f9b1afb5469588db6f26bd2953c6013f3db70ff",
+        "uefi": "5ee97b880e8bda20ab3cba0fc60eb747225f17a55a699029141207f573963733",
+    },
+}
+DEFAULT_VERSION = "2.158.15"
+VERSION = DEFAULT_VERSION
+CAB_SHA256 = VERSIONS[VERSION]["cab"]
 URL = f"https://fwupd.org/downloads/{CAB_SHA256}-socfw.cab"
-CAP_SHA256 = "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78"
-UEFI_SHA256 = "568ff181d47fbfd31504a22d6e42975db77b99b02c07fe5c76823b484441e645"
+CAP_SHA256 = VERSIONS[VERSION]["capsule"]
+UEFI_SHA256 = VERSIONS[VERSION]["uefi"]
 DIRECTORY = ROOT / "firmware" / "prepared" / VERSION
+
+
+def prepared_directory(version=DEFAULT_VERSION):
+    if version not in VERSIONS:
+        raise ValueError(f"unknown firmware version {version}; known: {sorted(VERSIONS)}")
+    return ROOT / "firmware" / "prepared" / version
 FMP_GUID = uuid.UUID("6dcbd5ed-e82d-4c44-bda1-7194199ad92a")
 SOC_GUID = uuid.UUID("b488217b-3895-4fc0-b1bf-ab7005a2d45a")
+# The 4.1.0 release ships one combined FMP image under a different type GUID; the
+# payload behind it is the same MediaTek MSS1/SF_BOOT stream.
+COMBINED_GUID = uuid.UUID("c8a8158c-76de-4129-a08d-d31bbea42c36")
 DXE_GUID = uuid.UUID("d6a2cb7f-6a18-4e2f-b43b-9920a733700a")
 
 
@@ -51,7 +81,8 @@ def capsule_payload(data):
         raise ValueError("FMP image overlaps its offset table")
     start = header_size + item
     image_header = checked(data, start, 48)
-    if struct.unpack_from("<I", image_header)[0] != 3 or image_header[4:20] != SOC_GUID.bytes_le:
+    if (struct.unpack_from("<I", image_header)[0] != 3 or
+            image_header[4:20] not in (SOC_GUID.bytes_le, COMBINED_GUID.bytes_le)):
         raise ValueError("expected the Spark SoC FMP v3 image")
     image_size, vendor_size = struct.unpack_from("<II", image_header, 24)
     image = checked(data, start + 48, image_size)
@@ -70,6 +101,7 @@ def capsule_payload(data):
 
 
 def unpack_uefi(payload, expected_hash=UEFI_SHA256):
+    """expected_hash=None extracts and reports without a pinned comparison."""
     """Decode the MediaTek FILEINFO LZMA stream and verify the exact UEFI image."""
     if not payload.startswith(b"SF_BOOT"):
         raise ValueError("expected a MediaTek SF_BOOT image")
@@ -81,7 +113,7 @@ def unpack_uefi(payload, expected_hash=UEFI_SHA256):
     result = decoder.decompress(payload[offset + 56:], max_length=32 * 1024 * 1024 + 1)
     if not decoder.eof or len(result) > 32 * 1024 * 1024:
         raise ValueError("truncated or oversized UEFI LZMA stream")
-    if sha256(result) != expected_hash:
+    if expected_hash is not None and sha256(result) != expected_hash:
         raise ValueError("extracted UEFI checksum mismatch")
     return result
 
@@ -122,8 +154,9 @@ def layout(image):
             "dxe_image_size": dxe["image_size"]}
 
 
-def prepare():
-    directory = DIRECTORY
+def prepare(version=DEFAULT_VERSION):
+    entry = VERSIONS[version]
+    directory = prepared_directory(version)
     if directory.resolve() != directory:
         raise ValueError("prepared firmware directory must not traverse a symbolic link")
     directory.mkdir(parents=True, exist_ok=True)
@@ -132,10 +165,11 @@ def prepare():
         if path.is_symlink():
             raise ValueError("prepared outputs must not be symbolic links")
         require_ignored_untracked(ROOT, path)
-    cab = ROOT / "firmware" / "downloads" / "spark-soc-2.158.15.cab"
+    url = f"https://fwupd.org/downloads/{entry['cab']}-socfw.cab"
+    cab = ROOT / "firmware" / "downloads" / f"spark-soc-{version}.cab"
     if not cab.exists():
-        cab = download(URL, CAB_SHA256, cab.name)
-    if cab.is_symlink() or sha256(cab.read_bytes()) != CAB_SHA256:
+        cab = download(url, entry["cab"], cab.name)
+    if cab.is_symlink() or sha256(cab.read_bytes()) != entry["cab"]:
         raise ValueError("local cabinet checksum mismatch")
     cap = directory / "socfw.cap"
     uefi = directory / "uefi.fd"
@@ -148,25 +182,29 @@ def prepare():
             with temporary.open("wb") as output:
                 subprocess.run([seven_zip, "e", "-so", str(cab), "socfw.cap"],
                                stdout=output, stderr=subprocess.PIPE, check=True)
-            if sha256(temporary.read_bytes()) != CAP_SHA256:
+            if sha256(temporary.read_bytes()) != entry["capsule"]:
                 raise ValueError("capsule checksum mismatch")
             temporary.replace(cap)
         finally:
             temporary.unlink(missing_ok=True)
-    if cap.is_symlink() or sha256(cap.read_bytes()) != CAP_SHA256:
+    if cap.is_symlink() or sha256(cap.read_bytes()) != entry["capsule"]:
         raise ValueError("local capsule checksum mismatch")
-    image = unpack_uefi(capsule_payload(cap.read_bytes()))
+    image = unpack_uefi(capsule_payload(cap.read_bytes()), entry["uefi"])
     if uefi.is_symlink():
         raise ValueError("firmware output must not be a symbolic link")
     uefi.write_bytes(image)
-    record = {"version": VERSION, "url": URL, "cab_sha256": CAB_SHA256,
-              "capsule_sha256": CAP_SHA256, "uefi_sha256": sha256(image),
+    record = {"version": version, "url": url, "cab_sha256": entry["cab"],
+              "capsule_sha256": entry["capsule"], "uefi_sha256": sha256(image),
               "signature_verified": False, **layout(image)}
     (directory / "layout.json").write_text(json.dumps(record, indent=2) + "\n")
     return uefi, record
 
 
 if __name__ == "__main__":
-    image, record = prepare()
-    print(f"Prepared unchanged Spark SoC {VERSION} UEFI: {image}")
+    import argparse
+    parser = argparse.ArgumentParser(description="prepare a pinned Spark SoC release")
+    parser.add_argument("--version", default=DEFAULT_VERSION, choices=sorted(VERSIONS))
+    arguments = parser.parse_args()
+    image, record = prepare(arguments.version)
+    print(f"Prepared unchanged Spark SoC {arguments.version} UEFI: {image}")
     print(json.dumps(record, indent=2))
