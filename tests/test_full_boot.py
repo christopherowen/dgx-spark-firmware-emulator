@@ -13,6 +13,8 @@ from tools.handoff import boot_arguments
 from tools.prepare_mm import unpack_mm
 
 ROOT = Path(__file__).resolve().parents[1]
+# Compiled once per geometry and program model, shared by every test that needs one.
+_PULSE_LIBRARIES = {}
 
 
 class MmPackageTests(unittest.TestCase):
@@ -85,6 +87,96 @@ class NorTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.directory.cleanup()
+
+    def request_bytes(self, command, address=0x3000000, data=b"", subcommand=0,
+                      capacity=8192):
+        """The same message `request` builds, without sending it to the default library."""
+        request = bytearray(capacity)
+        request[0] = command
+        request[5] = subcommand
+        struct.pack_into("<I", request, 1, len(data))
+        struct.pack_into("<Q", request, 7, address)
+        request[32:32 + len(data)] = data
+        return bytes(request)
+
+    # --- program pulses: both models, both geometries, order-independent ---------------------
+    #
+    # The store window (32 MiB at 0x03000000) and the board's whole device (64 MiB at offset 0) are
+    # both exercised, because a receipt names the layout and the model and the claim must hold for
+    # each. The libraries are built on first use and cached, so no test depends on another running.
+
+    GEOMETRIES = {
+        "store": dict(size=0x2000000, offset=0x3000000, base=0x3000000),
+        "whole": dict(size=0x4000000, offset=0x0, base=0x0),
+    }
+
+    @classmethod
+    def pulse_library(cls, geometry: str, model: str):
+        # A module-level cache: the class dictionary is read-only from a classmethod.
+        key = (geometry, model)
+        if key in _PULSE_LIBRARIES:
+            return _PULSE_LIBRARIES[key]
+        shape = cls.GEOMETRIES[geometry]
+        library = Path(cls.directory.name) / f"nor-{geometry}-{model}.so"
+        flags = ["-DNOR_DELAY_HOOK", f"-DNOR_SIZE={shape['size']:#x}UL",
+                 f"-DNOR_OFFSET={shape['offset']:#x}UL", "-DNOR_WRITE_US=400"]
+        if model == "byte":
+            flags.append("-DNOR_PROGRAM_MODEL=1")
+        subprocess.run([shutil.which("cc"), "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror",
+                        *flags, "-I", str(ROOT / "monitor"),
+                        str(ROOT / "monitor/nor.c"), str(ROOT / "tests/fixtures/nor_cut.c"),
+                        "-o", str(library)], check=True)
+        handle = ctypes.CDLL(str(library))
+        handle.nor_set_policy_armed.argtypes = [ctypes.c_int]
+        handle.nor_request_until.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p,
+                                             ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        handle.nor_request_until.restype = ctypes.c_int
+        handle.nor_test_spent.restype = ctypes.c_ulong
+        handle.nor_set_policy_armed(1)
+        _PULSE_LIBRARIES[key] = handle
+        return handle
+
+    def program_with(self, geometry, model, cut, address=None, count=256):
+        shape = self.GEOMETRIES[geometry]
+        handle = self.pulse_library(geometry, model)
+        flash = ctypes.create_string_buffer(b"\xff" * shape["size"], shape["size"])
+        address = shape["base"] if address is None else address
+        message = self.request_bytes(1, address=address, data=b"\x00" * count)
+        buffer = ctypes.create_string_buffer(bytes(message), len(message))
+        cut_hit = handle.nor_request_until(flash, shape["size"], buffer, len(buffer), 1, cut)
+        written = sum(1 for byte in flash.raw[:shape["size"]] if byte != 0xFF)
+        return cut_hit, written, handle.nor_test_spent()
+
+    def test_the_page_model_commits_the_request_before_spending_the_budget(self):
+        for geometry in self.GEOMETRIES:
+            with self.subTest(geometry=geometry):
+                self.assertEqual(self.program_with(geometry, "page", 1 << 30), (0, 256, 400))
+
+    def test_a_cut_at_zero_commits_nothing(self):
+        for geometry in self.GEOMETRIES:
+            with self.subTest(geometry=geometry):
+                cut_hit, written, _ = self.program_with(geometry, "byte", 0)
+                self.assertEqual((cut_hit, written), (1, 0))
+
+    def test_a_cut_mid_page_leaves_a_prefix(self):
+        for geometry in self.GEOMETRIES:
+            with self.subTest(geometry=geometry):
+                cut_hit, written, _ = self.program_with(geometry, "byte", 200)
+                self.assertEqual(cut_hit, 1)
+                self.assertTrue(1 <= written < 256, f"{geometry} wrote {written} bytes")
+
+    def test_a_byte_model_pulse_costs_exactly_one_page_budget(self):
+        for geometry in self.GEOMETRIES:
+            with self.subTest(geometry=geometry):
+                self.assertEqual(self.program_with(geometry, "byte", 1 << 30), (0, 256, 400))
+
+    def test_a_write_across_a_page_boundary_pays_two_budgets(self):
+        for geometry in self.GEOMETRIES:
+            with self.subTest(geometry=geometry):
+                base = self.GEOMETRIES[geometry]["base"]
+                cut_hit, _written, spent = self.program_with(geometry, "byte", 1 << 30,
+                                                             address=base + 0xFF, count=2)
+                self.assertEqual((cut_hit, spent), (0, 800))
 
     def setUp(self):
         self.flash = ctypes.create_string_buffer(b"\xff" * 0x2000000, 0x2000000)

@@ -2,12 +2,16 @@
 
 import hashlib
 import lzma
+import os
+from pathlib import Path
 import struct
 import unittest
 
 from types import SimpleNamespace
 
-from tools.boot_spark import apply_board_preset, usable_megabytes
+ROOT = Path(__file__).resolve().parents[1]
+
+from tools.boot_spark import apply_board_preset, resolve_flash_layout, usable_megabytes
 from tools.build_monitor import build_monitor, has_llvm_tools
 from tools.handoff import diagnostic_boot_arguments
 from tools.spark_image import FMP_GUID, SOC_GUID, capsule_payload, unpack_uefi
@@ -54,6 +58,58 @@ class BootInputTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             unpack_uefi(payload[:65], digest)
 
+
+class FlashLayoutTests(unittest.TestCase):
+    """The layout follows the input, so a file keeps meaning what its size says it is."""
+
+    def test_a_32_mib_state_is_a_store(self):
+        layout, size, offset, code = resolve_flash_layout(0x2000000)
+        self.assertEqual((layout, offset, code), ("store", 0x3000000, None))
+
+    def test_a_64_mib_state_is_the_whole_device(self):
+        layout, size, offset, code = resolve_flash_layout(0x4000000)
+        self.assertEqual((layout, size, offset, code), ("whole", 0x4000000, 0, 0x2000000))
+
+    def test_an_absent_state_starts_as_the_board_device(self):
+        # A new run should model the part rather than the old store window; an existing file keeps
+        # the meaning its size gives it, so nothing already on disk is reinterpreted.
+        layout, size, offset, code = resolve_flash_layout(None)
+        self.assertEqual((layout, size, offset, code), ("whole", 0x4000000, 0, 0x2000000))
+        self.assertEqual(resolve_flash_layout(None, "store")[0], "store")
+
+    def test_an_explicit_zero_code_offset_survives(self):
+        self.assertEqual(resolve_flash_layout(0x4000000, "whole", code_offset=0)[3], 0)
+
+    def test_at_most_two_cpus_are_accepted(self):
+        # The runner refuses a third CPU before it builds anything, so this needs no boot: the
+        # message and the exit status are the whole contract.
+        import subprocess, sys
+        result = subprocess.run([sys.executable, "tools/boot_spark.py", "--smoke-test",
+                                 "--smp", "3", "--timeout", "10"], cwd=ROOT,
+                                capture_output=True, text=True,
+                                env={**os.environ, "PATH": f"{ROOT / 'build' / 'host-tools' / 'bin'}:{os.environ['PATH']}"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("one or two CPUs", result.stderr + result.stdout)
+
+    def test_the_legacy_layout_can_be_forced_on_a_whole_image(self):
+        layout, _size, offset, code = resolve_flash_layout(0x4000000, "store")
+        self.assertEqual((layout, offset, code), ("store", 0x3000000, None))
+
+    def test_a_board_run_cannot_select_the_legacy_layout(self):
+        with self.assertRaises(ValueError):
+            resolve_flash_layout(0x4000000, "store", board=True)
+
+    def test_an_unknown_layout_is_refused(self):
+        with self.assertRaises(ValueError):
+            resolve_flash_layout(0x4000000, "device")
+
+
+class BoardPresetTests(unittest.TestCase):
+    def preset(self, **fields):
+        base = dict(flash_image=object(), code_offset=None, nor_size=None,
+                    write_us=None, erase_us=None)
+        base.update(fields)
+        return SimpleNamespace(**base)
 
 class BoardPresetTests(unittest.TestCase):
     def preset(self, **fields):
