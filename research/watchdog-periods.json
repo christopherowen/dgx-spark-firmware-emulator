@@ -1,0 +1,57 @@
+{
+  "source": {
+    "artifact": "the 2.158.15 capsule (components BL31, BL32) and the emulated boot's own trace",
+    "coordinate_space": "slot image; BL31/BL32 ranges are the map's offsets relative to the declared header (0x203000)",
+    "note": "BL31 and BL32 are present and high-entropy; the period is not read out of them, which is the record's finding",
+    "capsule_sha256": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78"
+  },
+  "schema": 1,
+  "question": "What interval does the board's SBSA generic watchdog count before it resets the machine?",
+  "answer": "not established from the artifacts in this repository",
+  "established": false,
+  "model_behaviour": {
+    "note": "The profile's watchdog counts the interval the guest programs. With no program, the machine does not reset; --gwdt-timeout-ms pre-arms WOR as a BL31 would, and that value is a lab choice, not the board's.",
+    "default_preload_ms": null,
+    "stages": {
+      "ws0": "first expiry, delivered as the GIC interrupt the profile wires",
+      "ws1": "second expiry, the device performs the machine reset itself (no irq involved)"
+    },
+    "unrefreshed_reset": "approximately 2 * WOR / clock-frequency"
+  },
+  "searched": [
+    {
+      "artifact": "firmware/prepared/2.155.11/uefi.fd",
+      "sha256": "5ee97b880e8bda20ab3cba0fc60eb747225f17a55a699029141207f573963733",
+      "method": "search for 0x1c041000 and 0x1c042000 as 4- and 8-byte little-endian values, and for watchdog-related strings",
+      "finding": "each address occurs exactly once, adjacent, inside module 7e374e25-8e01-4fee-87f2-390c23c606cd at image offset 0x6bdc90 (size 0x414c): platform description data, not a code constant. 'Watchdog' appears only in HII and protocol-name tables; no driver that programs WOR was found."
+    },
+    {
+      "artifact": "firmware/prepared/2.155.11/stmm.pkg",
+      "sha256": "ae81c97a13fb31222b67f6391a1c4145d25c4ec433896a5d21a6b4a28533f90d",
+      "method": "the same byte searches",
+      "finding": "neither address present; no watchdog strings"
+    },
+    {
+      "artifact": "firmware/prepared/2.155.11/socfw.cap",
+      "sha256": "0985b848b1708421a399935b7f9b1afb5469588db6f26bd2953c6013f3db70ff",
+      "method": "the same byte searches",
+      "finding": "the payload's map names BL31 (0x40044 bytes at 0x3e3000) and BL32 (0x2c870 at 0x425000), and at the corrected extraction both are present and high-entropy (8.00): the arming code ships, but the interval cannot be read out of it."
+    }
+  ],
+  "measured_behaviour": {
+    "hardware": "a payload running before the firmware read the watchdog status back as armed, and the firmware's own enable sets the control bit without writing the interval \u2014 so the interval was armed before the firmware ran",
+    "model": "a boot under the profile does not arm the watchdog unless asked to; a QEMU trace of the device was attempted and delivered no events on this build, so guest programming of the interval has not been measured here"
+  },
+  "confidence": "high that the DXE and MM images as stored do not establish the interval; unknown for the capsule's predecessor stage",
+  "what_would_close_it": [
+    "a capsule or readback that ships BL31/BL32 (both are present in this capsule, encrypted), then the WOR write in the early boot path",
+    "or reading the interval register from a live unit before any payload runs"
+  ],
+  "corrections": [
+    {
+      "what": "BL31/BL32 'erased in this capsule'",
+      "why": "the extraction was 0x203000 before the partition area the table's offsets are relative to",
+      "now": "both are present and encrypted; the interval is still unreadable, for a different reason"
+    }
+  ]
+}

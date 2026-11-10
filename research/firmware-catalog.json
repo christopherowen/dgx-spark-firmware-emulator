@@ -1,0 +1,54 @@
+{
+  "source": "https://cdn.fwupd.org/downloads/firmware.xml.gz, read 2026-11-09",
+  "what": "every DGX Spark firmware component the LVFS carries, with the releases it publishes. Each component currently has exactly one, so 'newest available' is a date and a hash rather than a choice among versions.",
+  "components": {
+    "com.nvidia.dgx.spark.ec.firmware": {
+      "name": "DGX Spark EC FW",
+      "releases": [
+        {
+          "version": "0x3000d07",
+          "date": "2026-09-28",
+          "file": "c3fab69bb1ef6d22e1a1d28a0bbc05319fb321bf81af4fd574349d2b0b23fa30-ec_fused.cab",
+          "cab_sha256": "c3fab69bb1ef6d22e1a1d28a0bbc05319fb321bf81af4fd574349d2b0b23fa30"
+        }
+      ]
+    },
+    "com.nvidia.dgx.spark.socfw.firmware": {
+      "name": "DGX Spark SoC FW",
+      "releases": [
+        {
+          "version": "0x2009e0f",
+          "date": "2026-09-28",
+          "file": "f895952896ffed39fc167de0f86eab40609b5baf9debcf12caa720123a915416-socfw.cab",
+          "cab_sha256": "f895952896ffed39fc167de0f86eab40609b5baf9debcf12caa720123a915416"
+        }
+      ]
+    },
+    "com.nvidia.dgx.spark.usbpd2.firmware": {
+      "name": "DGX Spark USB-C PD FW",
+      "releases": [
+        {
+          "version": "0x519",
+          "date": "2026-08-31",
+          "file": "80f10a661e8d231a0e5804e77f99ca9a6a8d846ea82443258f05d8c77c2089a8-usbpd.cab",
+          "cab_sha256": "80f10a661e8d231a0e5804e77f99ca9a6a8d846ea82443258f05d8c77c2089a8"
+        }
+      ]
+    }
+  },
+  "local": {
+    "spark-soc-2.158.15.cab": {
+      "version": "0x2009e0f",
+      "cab_sha256": "f895952896ffed39fc167de0f86eab40609b5baf9debcf12caa720123a915416",
+      "is_the_lvfs_artifact": true
+    },
+    "spark-soc-2.155.11.cab": {
+      "version": "0x2009b0b"
+    },
+    "spark-soc-4.1.0.cab": {
+      "version": null,
+      "note": "the Dell 'Pro Max with GB10 FCM1253' capsule (LVFS com.dell.uefic8a8158c, 4.1.0): same silicon family, different vendor packaging, no 0x version string"
+    }
+  },
+  "answer": "the newest DGX Spark SoC firmware available is 0x2009e0f, published 2026-09-28, and this repository already holds exactly that artifact (spark-soc-2.158.15.cab); the fan probe passes on it and on the Dell 4.1.0 capsule"
+}

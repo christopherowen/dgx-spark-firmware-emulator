@@ -1,0 +1,132 @@
+{
+  "schema": 1,
+  "source": {
+    "artifact": "the 2.158.15 capsule's slot image",
+    "capsule_sha256": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78",
+    "slot_sha256": "f89f6092341c410d9ae2103e7c0ca991c040393373bb3c0798e64ec7fca484cc",
+    "header_position": 2109440,
+    "coordinate_space": "slot image (SF_BOOT at 0); component ranges are header + table offset"
+  },
+  "image_sha256": "4b55dfb0be2a3f3991e7c6772b6c8b2ebd04113c225838c3288b4c018c5d2306",
+  "components": {
+    "SPBM": {
+      "size": 264524,
+      "sha256": "9b111b8b15b4440f8dc3989215a632a4ff04963cd28d80086e542a2747880391",
+      "entropy": 8.0,
+      "distinct_bytes": 256,
+      "strings": 453,
+      "range": [
+        5124096,
+        5388620
+      ],
+      "non_ff": 263470
+    },
+    "SSPM": {
+      "size": 525044,
+      "sha256": "b6d3b2203d77c768b68083b6d566221b4ecfb45e119f0952bc68c56151c6481e",
+      "entropy": 8.0,
+      "distinct_bytes": 256,
+      "strings": 865,
+      "range": [
+        2273280,
+        2798324
+      ],
+      "non_ff": 522980
+    },
+    "CPUEB": {
+      "size": 582476,
+      "sha256": "6c5ac22c3e61d83f5864f5022866d1bfd7fec62632a4e516d6b096a020192697",
+      "entropy": 8.0,
+      "distinct_bytes": 256,
+      "strings": 936,
+      "range": [
+        3461120,
+        4043596
+      ],
+      "non_ff": 580201
+    },
+    "HFRP": {
+      "size": 584068,
+      "sha256": "d62756587d1d94cce87b2f9994c78c34947204c6fd87e26b5c443f1c0e46325e",
+      "entropy": 8.0,
+      "distinct_bytes": 256,
+      "strings": 987,
+      "range": [
+        2805760,
+        3389828
+      ],
+      "non_ff": 581777
+    },
+    "DPM": {
+      "size": 49184,
+      "sha256": "309ddd012b998ebc3d31239afdccb82c1858c15cf2ff7ce208dae0dc73d8e624",
+      "entropy": 7.99,
+      "distinct_bytes": 256,
+      "strings": 101,
+      "range": [
+        5033984,
+        5083168
+      ],
+      "non_ff": 48986
+    },
+    "SPM": {
+      "size": 33832,
+      "sha256": "0591119686e960d58e5aa148cb005a754410da2b15ac5df2a48078199c1eb879",
+      "entropy": 7.98,
+      "distinct_bytes": 256,
+      "strings": 59,
+      "range": [
+        5087232,
+        5121064
+      ],
+      "non_ff": 33673
+    },
+    "GPU": {
+      "size": 524612,
+      "sha256": "0e10c09ce9d03810c58505c9732abdb5222093619d589a217194c5d94d0f6e1e",
+      "entropy": 8.0,
+      "distinct_bytes": 256,
+      "strings": 850,
+      "signed_containers": [],
+      "range": [
+        7024640,
+        7549252
+      ],
+      "non_ff": 522664
+    },
+    "PLL": {
+      "size": 6728,
+      "sha256": "da1561886627181f23664cf6851a0b416d00a5da77bd85816fe4113db9536f66",
+      "entropy": 7.92,
+      "distinct_bytes": 256,
+      "strings": 15,
+      "signed_containers": [
+        "PLL_CLK-1.0.0"
+      ],
+      "range": [
+        2183168,
+        2189896
+      ],
+      "non_ff": 6688
+    }
+  },
+  "finding": "the eight components measured here (SPBM, SSPM, CPUEB, HFRP, DPM, SPM, GPU, PLL) are high entropy (7.9-8.0), consistent with compression or encryption; nothing in them is a readable operating-point table, and the GPU partition holds no readable container tag. High entropy does not by itself distinguish encryption from compression: the UEFI component is also 8.00 and is a decodable LZMA stream.",
+  "what_would_close_it": [
+    "a plaintext vendor BSP, register map or BCT schema",
+    "a decrypted component from a unit, if one is ever obtained",
+    "a supported, side-effect-free read of the programmed controller state"
+  ],
+  "model": {
+    "what": "a 4 KiB window of the documented fields, served over SMCCC 0xC400008D",
+    "why_that_id": "the firmware's own SMC filter drops function ids it does not know, so a fresh id never reaches EL3. The OEM id the firmware already forwards is used, with a lab GUID of this repository's own, in the same request shape the RTC and fan services use",
+    "policy": "a write to an OS limit slot (0x100..0x10c) is mirrored into the effective slot (0x160..0x16c). That single relationship is what the interface table supports; the real arbitration between OS, EC and UEFI claims lives in SPBM, which ships encrypted",
+    "demonstrated": "probe: effective 0 -> write OS PL1 45000 -> effective 45000 -> restore -> effective 0, PL-OK"
+  },
+  "extraction": {
+    "base": "the MediaTek image header's position inside the slot image (0x203000 for all three capsules held)",
+    "derived": true,
+    "verified_by": "the UEFI component's embedded FILEINFO descriptor decodes to the 33554432-byte uefi.fd this repository boots, for 2.155.11, 2.158.15 and the Dell 4.1.0 capsule",
+    "why_it_matters": "slicing at the raw table offsets lands 0x203000 early: BL31 reads as erased (0.0% non-FF) instead of 98.4%, and every entropy here was recomputed after the correction"
+  },
+  "measured_scope": "these eight; the record makes no claim about BCT, STMM, FLASH, ESPI, OSR_FW, which are lower-entropy for their own reasons"
+}

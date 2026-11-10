@@ -1,0 +1,248 @@
+{
+  "source": {
+    "artifact": "the 2.158.15 capsule's slot image",
+    "capsule_sha256": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78",
+    "header_position": 2109440,
+    "coordinate_space": "slot image; component bodies are at the offset each component's descriptor chain gives"
+  },
+  "what_this_is": "where each component's payload actually begins, read from the component's own descriptor chain rather than from the map",
+  "finding": "the body offset is cbor_end + sub_offset + 0xd0 for every wrapped component, and the bytes there identify the payload: SPKG v2 for STMM, FLASH and ESPI; MediaTek FILEINFO for UEFI. BL31, BL32, TPM, SCP and the power firmware are opaque at their body \u2014 no container or tree magic \u2014 consistent with being signed or encrypted content.",
+  "not_a_finding": "RETRACTED: an earlier version of this record said the FDT structure block was empty after the root node. That was a parsing bug \u2014 device-tree names and values are padded to a 4-byte boundary, so the walker stepped one byte past the empty root name and read a token out of alignment. The manifests are fully populated; see research/spkg-manifest.json.",
+  "components": {
+    "SoCFSVN": {
+      "body_at": 1088,
+      "body_length": 160,
+      "kind": "opaque",
+      "first_bytes": "0d00000000020300",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "ACC": {
+      "body_at": 18144,
+      "body_length": 1296,
+      "kind": "opaque",
+      "first_bytes": "5bdd877be2427e5f",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "PLL": {
+      "body_at": 1088,
+      "body_length": 5640,
+      "kind": "opaque",
+      "first_bytes": "e2307db9b412b49f",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "DCC": {
+      "body_at": 1088,
+      "body_length": 1328,
+      "kind": "opaque",
+      "first_bytes": "f3b6e6191b5ce274",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "SSPM": {
+      "body_at": 1736,
+      "body_length": 523308,
+      "kind": "opaque",
+      "first_bytes": "c50cd37c14f95d46",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "HFRP": {
+      "body_at": 3716,
+      "body_length": 580352,
+      "kind": "opaque",
+      "first_bytes": "8d3c2e7ec3a456c3",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "CPUEB": {
+      "body_at": 394556,
+      "body_length": 187920,
+      "kind": "opaque",
+      "first_bytes": "ad8306f9c21c4ed9",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "DPM": {
+      "body_at": 43452,
+      "body_length": 5732,
+      "kind": "opaque",
+      "first_bytes": "c9c4026831580fde",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "SPM": {
+      "body_at": 31144,
+      "body_length": 2688,
+      "kind": "opaque",
+      "first_bytes": "d8b585acf8adcd40",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "SPBM": {
+      "body_at": 2380,
+      "body_length": 262144,
+      "kind": "opaque",
+      "first_bytes": "fe016a21c64b8e32",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "USB4": {
+      "body_at": 1492,
+      "body_length": 70672,
+      "kind": "opaque",
+      "first_bytes": "35f5d3161821c7a9",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "BL31": {
+      "body_at": 1088,
+      "body_length": 261124,
+      "kind": "opaque",
+      "first_bytes": "13b86c44e5b37434",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "BL32": {
+      "body_at": 1088,
+      "body_length": 181296,
+      "kind": "opaque",
+      "first_bytes": "a128f0f61b71ee12",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "TPM": {
+      "body_at": 1088,
+      "body_length": 184712,
+      "kind": "opaque",
+      "first_bytes": "2e6d77abde069ff7",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "SoCDSVN": {
+      "body_at": 1088,
+      "body_length": 64,
+      "kind": "opaque",
+      "first_bytes": "0500000000030c00",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "GPU": {
+      "body_at": 1088,
+      "body_length": 523524,
+      "kind": "opaque",
+      "first_bytes": "956dea042fc56cd4",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "OSR_FMC": {
+      "body_at": 92428,
+      "body_length": 5616,
+      "kind": "opaque",
+      "first_bytes": "8e6fd8a664edf10a",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "OSR_DCT": {
+      "body_at": 688,
+      "body_length": 80,
+      "kind": "opaque",
+      "first_bytes": "0000000000000000",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "OSR_FW": {
+      "body_at": 557248,
+      "body_length": 51504,
+      "kind": "opaque",
+      "first_bytes": "4f53524f54204657",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "OEMFSVN": {
+      "body_at": 688,
+      "body_length": 64,
+      "kind": "opaque",
+      "first_bytes": "0500000000040a00",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "FLASH": {
+      "body_at": 688,
+      "body_length": 180920,
+      "kind": "SPKG v2",
+      "first_bytes": "53504b4702000000",
+      "fdt_at": 4784,
+      "fv_at": null
+    },
+    "ESPI": {
+      "body_at": 688,
+      "body_length": 274680,
+      "kind": "SPKG v2",
+      "first_bytes": "53504b4702000000",
+      "fdt_at": 4784,
+      "fv_at": null
+    },
+    "STMM": {
+      "body_at": 688,
+      "body_length": 454656,
+      "kind": "SPKG v2",
+      "first_bytes": "53504b4702000000",
+      "fdt_at": 4784,
+      "fv_at": 8920
+    },
+    "SCP": {
+      "body_at": 1152,
+      "body_length": 91620,
+      "kind": "opaque",
+      "first_bytes": "d8f50200d9db0000",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "OEMDSVN": {
+      "body_at": 688,
+      "body_length": 4,
+      "kind": "opaque",
+      "first_bytes": "00000000",
+      "fdt_at": null,
+      "fv_at": null
+    },
+    "UEFI": {
+      "body_at": 688,
+      "body_length": 1743764,
+      "kind": "MediaTek FILEINFO",
+      "first_bytes": "4d4d4d0000020000",
+      "fdt_at": null,
+      "fv_at": null
+    }
+  },
+  "what_the_fdts_say": "they are Arm FF-A partition manifests: STMM is 'StandaloneMm Firmware', FLASH is 'Flash Service' (owns the QSPI controller registers, stream id 180), ESPI is 'eSPI Service' (partition id 0x8003, stream id 181).",
+  "partition_images": {
+    "finding": "the SPKG images are plaintext AArch64, not encrypted: FLASH entropy 5.55 and ESPI 5.62 both begin with `b +0x40` (10 00 00 14), and STMM (3.80) begins with a branch and carries UEFI variable names. Only the 15 AEAD components are encrypted.",
+    "measured": {
+      "FLASH": {
+        "offset_in_component": 8880,
+        "size": 172728,
+        "entropy": 5.55,
+        "first_instruction": "10000014",
+        "is_aarch64_branch": true
+      },
+      "ESPI": {
+        "offset_in_component": 8880,
+        "size": 266488,
+        "entropy": 5.62,
+        "first_instruction": "10000014",
+        "is_aarch64_branch": true
+      },
+      "STMM": {
+        "offset_in_component": 8880,
+        "size": 446464,
+        "entropy": 3.8,
+        "first_instruction": "00dc0014",
+        "is_aarch64_branch": true
+      }
+    }
+  }
+}

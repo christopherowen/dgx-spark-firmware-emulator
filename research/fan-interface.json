@@ -1,0 +1,74 @@
+{
+  "source": {
+    "table": "DSDT, captured from the emulated profile (vendor UEFI 2.158.15)",
+    "sha256": "b0c2a9aa95c50b8e93345f89538a53a5973b8fea36a786ad0608b5cbef8697f5",
+    "size": 71058,
+    "how": "tests/fixtures/nvram_census.c writes the tables the firmware publishes into the run directory"
+  },
+  "device": {
+    "hid": "PNP0C0B",
+    "instances": [
+      "\\_SB.FAN0 (_UID 0)",
+      "\\_SB.FAN1 (_UID 1)"
+    ]
+  },
+  "interface": {
+    "FIF": {
+      "returns": [
+        0,
+        1,
+        1,
+        1
+      ],
+      "meaning": "Revision 0, fine-grained control, step size 1, low-speed notification 1"
+    },
+    "FPS": {
+      "returns": [
+        0,
+        [
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      ],
+      "note": "present but unused for state mapping: fine-grained control wins"
+    },
+    "level_range": [
+      0,
+      100
+    ],
+    "rpm_for_level": "FMIN + ((FMAX - FMIN) * level) / 100, FMIN 975, FMAX 4350",
+    "level_zero_meaning": "975 rpm, the slowest the firmware drives the fans; there is no automatic level in this interface"
+  },
+  "smc": {
+    "function_id": "0xC400008D",
+    "endpoint": 32771,
+    "guid": [
+      "0x20418532A0634A88",
+      "0x46A5A008C0EEAA83"
+    ],
+    "completion": "0xC400008E",
+    "write_request": "0x09 | (command << 8) | (value << 40)",
+    "read_request": "0x0C | (command << 8) | (2 << 40)",
+    "write_commands": {
+      "0x06000790": "fan 0, low byte",
+      "0x06000791": "fan 0, high byte",
+      "0x06000792": "fan 1, low byte",
+      "0x06000793": "fan 1, high byte"
+    },
+    "read_commands": {
+      "0x06000704": "fan 0 speed",
+      "0x06000706": "fan 1 speed"
+    },
+    "note": "one _FSL on either fan writes all four commands with the same rpm"
+  },
+  "status": {
+    "FST_returns": [
+      "revision",
+      "control (the last level written, from AML state)",
+      "speed in rpm (from the SMC reply)"
+    ]
+  }
+}

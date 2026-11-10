@@ -1,0 +1,156 @@
+{
+  "source": "firmware/prepared/2.158.15/uefi.fd (vendor UEFI, 2.158.15)",
+  "image_sha256": "568ff181d47fbfd31504a22d6e42975db77b99b02c07fe5c76823b484441e645",
+  "table_offset": 2557452,
+  "description": "a build-configuration vocabulary the firmware carries: NUL-separated knob names, each followed by its legal values where it has them. It states which DRAM knobs exist and what their levels mean. It is not a runtime interface: no artifact we hold shows one, and the partitions that would carry the resulting timings (BCT, DDRFSK, MISC) are erased in every release and in the recovery image.",
+  "entries": [
+    {
+      "name": "BCT",
+      "values": null
+    },
+    {
+      "name": "DRAM_ENCRYPT",
+      "values": "0:off, 1:on"
+    },
+    {
+      "name": "DRAM_VOL_LEVEL",
+      "values": "0:NV, 1:HV, 2:LV, 3:6P, 4:7P, 5:8P, 6:9P, 7:10P"
+    },
+    {
+      "name": "DRAM_RAPIDK_DIS",
+      "values": "0:on, 1:off"
+    },
+    {
+      "name": "DRAM_EYESCAN",
+      "values": "0:non TPM, 1:fTPM, 2:dTPM"
+    },
+    {
+      "name": "PLUTON",
+      "values": null
+    },
+    {
+      "name": "TBD",
+      "values": null
+    },
+    {
+      "name": "IGPU_DIS",
+      "values": null
+    },
+    {
+      "name": "IGPU_PHY_DIS",
+      "values": null
+    },
+    {
+      "name": "C2C_DIS",
+      "values": null
+    },
+    {
+      "name": "C2C_PHY_DIS",
+      "values": null
+    },
+    {
+      "name": "DISP_DIS",
+      "values": null
+    },
+    {
+      "name": "DLA_DIS",
+      "values": null
+    },
+    {
+      "name": "PROD_BOOT",
+      "values": "0:off 1:on"
+    },
+    {
+      "name": "SMT",
+      "values": null
+    },
+    {
+      "name": "DRAMK_LOG",
+      "values": "0:user mode, 1:debug mode"
+    },
+    {
+      "name": "GP0986",
+      "values": null
+    },
+    {
+      "name": "GP1617",
+      "values": null
+    },
+    {
+      "name": "GP1718",
+      "values": null
+    },
+    {
+      "name": "GP2223",
+      "values": null
+    },
+    {
+      "name": "GP2425",
+      "values": null
+    },
+    {
+      "name": "GP2627",
+      "values": null
+    },
+    {
+      "name": "GP2829",
+      "values": null
+    },
+    {
+      "name": "GP6768",
+      "values": null
+    },
+    {
+      "name": "GP7273",
+      "values": null
+    },
+    {
+      "name": "GP7879",
+      "values": null
+    },
+    {
+      "name": "GP102103",
+      "values": null
+    },
+    {
+      "name": "GP106107",
+      "values": null
+    },
+    {
+      "name": "GP152153",
+      "values": null
+    },
+    {
+      "name": "GP214215",
+      "values": null
+    },
+    {
+      "name": "GP216217",
+      "values": null
+    },
+    {
+      "name": "GP218219",
+      "values": null
+    },
+    {
+      "name": "GP220221",
+      "values": null
+    },
+    {
+      "name": "GP228229",
+      "values": null
+    },
+    {
+      "name": "GP239240",
+      "values": null
+    },
+    {
+      "name": "GP301302",
+      "values": null
+    },
+    {
+      "name": "GP303304",
+      "values": null
+    }
+  ]
+}

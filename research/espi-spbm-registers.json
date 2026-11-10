@@ -1,0 +1,103 @@
+{
+  "source": {
+    "artifact": "the ESPI component of the 2.158.15 capsule's slot image",
+    "capsule_sha256": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78",
+    "image_sha256": "67b9650baef4a3ad224413d89d08aa743517d7bf69ed85882d1cf33f5c492bcf",
+    "image_size": 266488,
+    "coordinate_space": "ESPI image offsets (image begins 0x2000 into the SPKG body)"
+  },
+  "what_this_is": "the SPBM register identifiers the eSPI Service's own code addresses, recovered from the movz/movk pairs that build them. These are the registers behind the service that the ACPI fan methods reach through SMC 0xC400008D on endpoint 0x8003.",
+  "power_limit_block": {
+    "registers": [
+      "0x06000714",
+      "0x06000718",
+      "0x0600071c",
+      "0x06000720",
+      "0x06000724",
+      "0x06000728"
+    ],
+    "handler": "write_power_limit_handler (name string at image 0x3f880)",
+    "source_file_string": "espi_svc/esvc_ec_power_limit.c",
+    "evidence": "0x06000718 is read as a 4-byte type field at image 0x369ec; the block's other registers follow at 0x36ab0-0x36bc4"
+  },
+  "other_registers": {
+    "0x06000400": [
+      "0x36a54",
+      "0x36c2c"
+    ],
+    "0x06000500": [
+      "0x37520"
+    ],
+    "0x06000504": [
+      "0x370ac",
+      "0x37134",
+      "0x373c4"
+    ],
+    "0x06000632": [
+      "0x30ce8"
+    ],
+    "0x06000636": [
+      "0x3105c"
+    ],
+    "0x0600065f": [
+      "0x30fac"
+    ],
+    "0x06000714": [
+      "0x36050",
+      "0x3609c",
+      "0x36990"
+    ],
+    "0x06000718": [
+      "0x369ec"
+    ],
+    "0x0600071c": [
+      "0x36ab0"
+    ],
+    "0x06000720": [
+      "0x36b0c"
+    ],
+    "0x06000724": [
+      "0x36b68"
+    ],
+    "0x06000728": [
+      "0x36bc4"
+    ],
+    "0x06000788": [
+      "0x3799c"
+    ],
+    "0x06000798": [
+      "0x33ddc"
+    ],
+    "0x06000800": [
+      "0x34730",
+      "0x35900",
+      "0x35c9c"
+    ],
+    "0x06000801": [
+      "0x375f0"
+    ],
+    "0x06000802": [
+      "0x311bc"
+    ],
+    "0x06000804": [
+      "0x31224"
+    ],
+    "0x06000805": [
+      "0x3127c",
+      "0x312d8"
+    ],
+    "0x06000900": [
+      "0x30268",
+      "0x304e4",
+      "0x35fe0"
+    ],
+    "0x06000904": [
+      "0x2fdac",
+      "0x35f94"
+    ]
+  },
+  "reachability": "NOT established. The service is reached from normal world only through EL3 (the fan methods' SMC 0xC400008D), and BL31 is among the encrypted components, so whether an arbitrary SPBM register id is accepted from normal world is decided by code we cannot read. The fan ids 0x06000704/706/790-793 do not appear in this image at all.",
+  "not_claimed": "that these registers are readable or writable from normal world, or that writing them changes clocks. The map says which registers the vendor's own service uses; it says nothing about permission.",
+  "register_count": 21,
+  "protocol_boundary": "the eSPI image contains no decoder for the SMC word the fan methods use: there is no instruction extracting bits 40..47 anywhere in it, and the fan register ids 0x06000704/706/790-793 never appear. So the SMC word is decoded in EL3, which is encrypted, and whether the gateway accepts an id outside the documented family cannot be answered from this image \u2014 a negative that closes the static route for that question."
+}

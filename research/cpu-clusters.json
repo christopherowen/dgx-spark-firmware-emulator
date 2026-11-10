@@ -1,0 +1,78 @@
+{
+  "source": {
+    "how": "read-only sysfs on three units running BIOS 5.36_0ACUM027: /sys/devices/system/cpu/cpufreq/policy*/cpuinfo_max_freq, cpufreq driver and governor",
+    "firmware": "5.36_0ACUM027 (three units, identical counts)",
+    "note": "no workload was run; these are the advertised maxima and the driver's identity"
+  },
+  "driver": "cppc_cpufreq",
+  "governor": "performance",
+  "boost": 0,
+  "policies": 20,
+  "clusters": [
+    {
+      "max_khz": 3900000,
+      "cpus": [
+        5,
+        6,
+        7,
+        8,
+        9,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "count": 10
+    },
+    {
+      "max_khz": 2808000,
+      "cpus": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        10,
+        11,
+        12,
+        13,
+        14
+      ],
+      "count": 10
+    }
+  ],
+  "what_it_means": "the platform exposes two clusters through one driver. A single-threaded or latency-sensitive job can be pinned to the fast ten (taskset -c 5-9,15-19); that is a supported, reversible placement change, not a clock increase.",
+  "what_it_does_not_mean": "that the faster cluster is idle-free or that pinning makes a parallel job faster. The DSDT cannot state the ceiling either: its _CPC package carries register descriptors, not values. Nor that pinning doubles anything: capacity-aware scheduling is already in effect.",
+  "not_established": [
+    "whether 3.9 GHz is the silicon maximum",
+    "the measured gain of pinning, which needs a benchmark on a unit",
+    "the throughput effect of a 2% clock at a fixed workload \u2014 the clock moved, the work was not measured"
+  ],
+  "scheduler_capacity": {
+    "slow_cluster": "718-731",
+    "fast_cluster": "997-1024",
+    "reading": "cpu_capacity differs by cluster, so capacity-aware scheduling is active: the scheduler already prefers the fast ten. taskset therefore guarantees placement rather than uncovering it, and the gain for long-running threads is smaller than the clock ratio."
+  },
+  "boost_measured": {
+    "method": "one unit: echo 1 > /sys/devices/system/cpu/cpufreq/boost, read every policy's cpuinfo_max_freq, then 0 and read again; restored to 0 afterwards",
+    "effect": {
+      "cpus_0_9_unchanged": true,
+      "cpus_10_14": {
+        "before_khz": 2808000,
+        "boost_khz": 2860000
+      },
+      "cpus_15_18": {
+        "before_khz": 3900000,
+        "boost_khz": 3978000
+      },
+      "cpu_19": {
+        "before_khz": 3900000,
+        "boost_khz": 4004000
+      }
+    },
+    "gain": "1.9-2.7% on ten of the twenty CPUs; zero on the other ten",
+    "it_is_usable": "policy 15's scaling_max_freq followed to the new ceiling and scaling_cur_freq read 3978000, so the cores run at the raised clock while boost is on",
+    "reversible": "writing 0 restored every ceiling exactly (policy 10-14 to 2808000, 15-19 to 3900000)"
+  }
+}

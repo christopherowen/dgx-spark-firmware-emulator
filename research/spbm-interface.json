@@ -1,0 +1,1090 @@
+{
+  "schema": 1,
+  "source": {
+    "table": "DSDT, captured under the emulator (vendor UEFI 2.158.15), decompiled with iasl",
+    "sha256": "b0c2a9aa95c50b8e93345f89538a53a5973b8fea36a786ad0608b5cbef8697f5",
+    "coordinate_space": "not applicable: these are ACPI register offsets inside \\_SB.MTEL (0x05170000), not offsets into a capsule or part image",
+    "unaffected_by": "the component-extraction defect: no field here was read out of a capsule slice"
+  },
+  "description": "an ACPI method returns the interface groups and, for each, the fields it exposes with their offsets inside that group's shared structure",
+  "groups": {
+    "CPUEB": [
+      "CPUEB_FASTDVFS_LOG_OFFSET",
+      "CPUEB_PERFCNT_LOG_OFFSET",
+      "CPUEB_CPPC_INTERFACE_OFFSET",
+      "CPUEB_PL_INTERFACE_OFFSET",
+      "CPUEB_TJPID_SLAVE0_OFFSET",
+      "CPUEB_TJPID_SLAVE1_OFFSET"
+    ],
+    "SPBM": [
+      "SPBM_PL1_VAL_OS_OFFSET",
+      "SPBM_PL2_VAL_OS_OFFSET",
+      "SPBM_PL3_VAL_OS_OFFSET",
+      "SPBM_PL4_VAL_OS_OFFSET",
+      "SPBM_SYSPL1_VAL_OS_OFFSET",
+      "SPBM_SYSPL2_VAL_OS_OFFSET",
+      "SPBM_SYSPL3_VAL_OS_OFFSET",
+      "SPBM_SYSPL4_VAL_OS_OFFSET",
+      "SPBM_PL1_VAL_EC_OFFSET",
+      "SPBM_PL2_VAL_EC_OFFSET",
+      "SPBM_PL3_VAL_EC_OFFSET",
+      "SPBM_PL4_VAL_EC_OFFSET",
+      "SPBM_SYSPL1_VAL_EC_OFFSET",
+      "SPBM_SYSPL2_VAL_EC_OFFSET",
+      "SPBM_SYSPL3_VAL_EC_OFFSET",
+      "SPBM_SYSPL4_VAL_EC_OFFSET",
+      "SPBM_PL1_VAL_UEFI_OFFSET",
+      "SPBM_PL2_VAL_UEFI_OFFSET",
+      "SPBM_PL3_VAL_UEFI_OFFSET",
+      "SPBM_PL4_VAL_UEFI_OFFSET",
+      "SPBM_SYSPL1_VAL_UEFI_OFFSET",
+      "SPBM_SYSPL2_VAL_UEFI_OFFSET",
+      "SPBM_SYSPL3_VAL_UEFI_OFFSET",
+      "SPBM_SYSPL4_VAL_UEFI_OFFSET",
+      "SPBM_PL1_VAL_OFFSET",
+      "SPBM_PL2_VAL_OFFSET",
+      "SPBM_PL3_VAL_OFFSET",
+      "SPBM_PL4_VAL_OFFSET",
+      "SPBM_SYSPL1_VAL_OFFSET",
+      "SPBM_SYSPL2_VAL_OFFSET",
+      "SPBM_SYSPL3_VAL_OFFSET",
+      "SPBM_SYSPL4_VAL_OFFSET",
+      "SPBM_PL1_KP_OFFSET",
+      "SPBM_PL1_KI_OFFSET",
+      "SPBM_PL1_KD_OFFSET",
+      "SPBM_PL1_TAU_OFFSET",
+      "SPBM_PL2_KP_OFFSET",
+      "SPBM_PL2_KI_OFFSET",
+      "SPBM_PL2_KD_OFFSET",
+      "SPBM_PL2_TAU_OFFSET",
+      "SPBM_PL3_KP_OFFSET",
+      "SPBM_PL3_KI_OFFSET",
+      "SPBM_PL3_KD_OFFSET",
+      "SPBM_PL3_TAU_OFFSET",
+      "SPBM_SYSPL1_KP_OFFSET",
+      "SPBM_SYSPL1_KI_OFFSET",
+      "SPBM_SYSPL1_KD_OFFSET",
+      "SPBM_SYSPL1_TAU_OFFSET",
+      "SPBM_SYSPL2_KP_OFFSET",
+      "SPBM_SYSPL2_KI_OFFSET",
+      "SPBM_SYSPL2_KD_OFFSET",
+      "SPBM_SYSPL2_TAU_OFFSET",
+      "SPBM_SYSPL3_KP_OFFSET",
+      "SPBM_SYSPL3_KI_OFFSET",
+      "SPBM_SYSPL3_KD_OFFSET",
+      "SPBM_SYSPL3_TAU_OFFSET",
+      "SPBM_EDPC_CPUE_KP_OFFSET",
+      "SPBM_EDPC_CPUE_KI_OFFSET",
+      "SPBM_EDPC_CPUE_KD_OFFSET",
+      "SPBM_EDPC_CPUE_TAU_OFFSET",
+      "SPBM_EDPC_CPUP_KP_OFFSET",
+      "SPBM_EDPC_CPUP_KI_OFFSET",
+      "SPBM_EDPC_CPUP_KD_OFFSET",
+      "SPBM_EDPC_CPUP_TAU_OFFSET",
+      "SPBM_PL_EDPC_CPUE_VAL_OS_OFFSET",
+      "SPBM_PL_EDPC_CPUP_VAL_OS_OFFSET",
+      "SPBM_TE_SYS_TOTAL_TELEMETRY_OFFSET",
+      "SPBM_TE_SOC_PKG_TELEMETRY_OFFSET",
+      "SPBM_TE_C_AND_G_TELEMETRY_OFFSET",
+      "SPBM_TE_CPU_P_TELEMETRY_OFFSET",
+      "SPBM_TE_CPU_E_TELEMETRY_OFFSET",
+      "SPBM_TE_VCORE_TELEMETRY_OFFSET",
+      "SPBM_TE_VDDQ_TELEMETRY_OFFSET",
+      "SPBM_TE_CHR_TELEMETRY_OFFSET",
+      "SPBM_TE_GPC_OUT_OFFSET",
+      "SPBM_TE_TOTAL_GPU_OUT_OFFSET",
+      "SPBM_TE_GPC_IN_OFFSET",
+      "SPBM_TE_TOTAL_GPU_IN_OFFSET",
+      "SPBM_TE_TOTAL_SYS_IN_OFFSET",
+      "SPBM_TE_DLA_IN_OFFSET",
+      "SPBM_TE_PREREG_IN_OFFSET",
+      "SPBM_TE_DLA_OUT_OFFSET",
+      "SPBM_PL_CUR_LEVEL_STATUS_OFFSET",
+      "SPBM_PROCHOT_STATUS_OFFSET",
+      "SPBM_PID_MIN_WINNER_OFFSET",
+      "SPBM_PID_MIN_WINNER_LOCK_OFFSET",
+      "SPBM_PKG_ENERGY_VALUE_ACCUMULATE_OFFSET",
+      "SPBM_PKG_ENERGY_VALUE_OVERFLOW_OFFSET",
+      "SPBM_PKG_ENERGY_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_CPU_E_ENERGY_VALUE_ACCUMULATE_OFFSET",
+      "SPBM_CPU_E_ENERGY_VALUE_OVERFLOW_OFFSET",
+      "SPBM_CPU_E_ENERGY_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_CPU_P_ENERGY_VALUE_ACCUMULATE_OFFSET",
+      "SPBM_CPU_P_ENERGY_VALUE_OVERFLOW_OFFSET",
+      "SPBM_CPU_P_ENERGY_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_GPC_ENERGY_VALUE_ACCUMULATE_OFFSET",
+      "SPBM_GPC_ENERGY_VALUE_OVERFLOW_OFFSET",
+      "SPBM_GPC_ENERGY_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_GPM_ENERGY_VALUE_ACCUMULATE_OFFSET",
+      "SPBM_GPM_ENERGY_VALUE_OVERFLOW_OFFSET",
+      "SPBM_GPM_ENERGY_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_BUDGET_CPU_INST_OFFSET",
+      "SPBM_BUDGET_GPU_INST_OFFSET",
+      "SPBM_BUDGET_CPU_ACCUMULATE_OFFSET",
+      "SPBM_BUDGET_CPU_VALUE_OVERFLOW_OFFSET",
+      "SPBM_BUDGET_CPU_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_BUDGET_GPU_ACCUMULATE_OFFSET",
+      "SPBM_BUDGET_GPU_VALUE_OVERFLOW_OFFSET",
+      "SPBM_BUDGET_GPU_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_BUDGET_CPU_E_INST_OFFSET",
+      "SPBM_BUDGET_CPU_P_INST_OFFSET",
+      "SPBM_BUDGET_CPU_E_ACCUMULATE_OFFSET",
+      "SPBM_BUDGET_CPU_E_VALUE_OVERFLOW_OFFSET",
+      "SPBM_BUDGET_CPU_E_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_BUDGET_CPU_P_ACCUMULATE_OFFSET",
+      "SPBM_BUDGET_CPU_P_VALUE_OVERFLOW_OFFSET",
+      "SPBM_BUDGET_CPU_P_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_PL1_OFFSET",
+      "SPBM_PID_OUTPUT_PL2_OFFSET",
+      "SPBM_PID_OUTPUT_PL3_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL1_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL2_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL3_OFFSET",
+      "SPBM_PID_OUTPUT_PL1_ACCUMULATE_OFFSET",
+      "SPBM_PID_OUTPUT_PL1_VALUE_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_PL1_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_PL2_ACCUMULATE_OFFSET",
+      "SPBM_PID_OUTPUT_PL2_VALUE_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_PL2_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_PL3_ACCUMULATE_OFFSET",
+      "SPBM_PID_OUTPUT_PL3_VALUE_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_PL3_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL1_ACCUMULATE_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL1_VALUE_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL1_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL2_ACCUMULATE_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL2_VALUE_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL2_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL3_ACCUMULATE_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL3_VALUE_OVERFLOW_OFFSET",
+      "SPBM_PID_OUTPUT_SYSPL3_CLEAR_OVERFLOW_OFFSET",
+      "SPBM_BUDGETER_LOOP_TIME_OFFSET",
+      "SPBM_BUDGETER_W1_OFFSET",
+      "SPBM_BUDGETER_W2_OFFSET",
+      "SPBM_BUDGETER_W1_MIN_OFFSET",
+      "SPBM_BUDGETER_W2_MIN_OFFSET",
+      "SPBM_BUDGETER_W1_OVERSHOOT_OFFSET",
+      "SPBM_BUDGETER_W2_OVERSHOOT_OFFSET",
+      "SPBM_BUDGETER_W1_HUNGRY_OFFSET",
+      "SPBM_BUDGETER_W2_HUNGRY_OFFSET",
+      "SPBM_BUDGETER_W1_STEP_AWAY_OFFSET",
+      "SPBM_BUDGETER_W2_STEP_AWAY_OFFSET",
+      "SPBM_BUDGETER_W1_STEP_TOWARDS_OFFSET",
+      "SPBM_BUDGETER_W2_STEP_TOWARDS_OFFSET",
+      "SPBM_BUDGETER_EP_LOOP_TIME_OFFSET",
+      "SPBM_BUDGETER_EP_W1_OFFSET",
+      "SPBM_BUDGETER_EP_W2_OFFSET",
+      "SPBM_BUDGETER_EP_W1_MIN_OFFSET",
+      "SPBM_BUDGETER_EP_W2_MIN_OFFSET",
+      "SPBM_BUDGETER_EP_W1_OVERSHOOT_OFFSET",
+      "SPBM_BUDGETER_EP_W2_OVERSHOOT_OFFSET",
+      "SPBM_BUDGETER_EP_W1_HUNGRY_OFFSET",
+      "SPBM_BUDGETER_EP_W2_HUNGRY_OFFSET",
+      "SPBM_BUDGETER_EP_W1_STEP_AWAY_OFFSET",
+      "SPBM_BUDGETER_EP_W2_STEP_AWAY_OFFSET",
+      "SPBM_BUDGETER_EP_W1_STEP_TOWARDS_OFFSET",
+      "SPBM_BUDGETER_EP_W2_STEP_TOWARDS_OFFSET",
+      "SPBM_PL1_II_LIMIT_LOWER_OFFSET",
+      "SPBM_PL1_II_LIMIT_UPPER_OFFSET",
+      "SPBM_PL1_LIMIT_LOW_OFFSET",
+      "SPBM_PL1_LIMIT_HIGH_OFFSET",
+      "SPBM_PL2_II_LIMIT_LOWER_OFFSET",
+      "SPBM_PL2_II_LIMIT_UPPER_OFFSET",
+      "SPBM_PL2_LIMIT_LOW_OFFSET",
+      "SPBM_PL2_LIMIT_HIGH_OFFSET",
+      "SPBM_PL3_II_LIMIT_LOWER_OFFSET",
+      "SPBM_PL3_II_LIMIT_UPPER_OFFSET",
+      "SPBM_PL3_LIMIT_LOW_OFFSET",
+      "SPBM_PL3_LIMIT_HIGH_OFFSET",
+      "SPBM_SYSPL1_II_LIMIT_LOWER_OFFSET",
+      "SPBM_SYSPL1_II_LIMIT_UPPER_OFFSET",
+      "SPBM_SYSPL1_LIMIT_LOW_OFFSET",
+      "SPBM_SYSPL1_LIMIT_HIGH_OFFSET",
+      "SPBM_SYSPL2_II_LIMIT_LOWER_OFFSET",
+      "SPBM_SYSPL2_II_LIMIT_UPPER_OFFSET",
+      "SPBM_SYSPL2_LIMIT_LOW_OFFSET",
+      "SPBM_SYSPL2_LIMIT_HIGH_OFFSET",
+      "SPBM_SYSPL3_II_LIMIT_LOWER_OFFSET",
+      "SPBM_SYSPL3_II_LIMIT_UPPER_OFFSET",
+      "SPBM_SYSPL3_LIMIT_LOW_OFFSET",
+      "SPBM_SYSPL3_LIMIT_HIGH_OFFSET",
+      "SPBM_PWR_AVG_EWMA_S_PL1_OFFSET",
+      "SPBM_PWR_AVG_EWMA_S_PL2_OFFSET",
+      "SPBM_PWR_AVG_EWMA_S_PL3_OFFSET",
+      "SPBM_PWR_AVG_EWMA_S_SYSPL1_OFFSET",
+      "SPBM_PWR_AVG_EWMA_S_SYSPL2_OFFSET",
+      "SPBM_PWR_AVG_EWMA_S_SYSPL3_OFFSET",
+      "SPBM_PKG_TJ_MAX_OFFSET",
+      "SPBM_PKG_TJ_MAX_C_OFFSET",
+      "SPBM_PKG_THERMAL_ZONE_TEMP_CPU_E_CLU_0_OFFSET",
+      "SPBM_PKG_THERMAL_ZONE_TEMP_CPU_P_CLU_0_OFFSET",
+      "SPBM_PKG_THERMAL_ZONE_TEMP_CPU_E_CLU_1_OFFSET",
+      "SPBM_PKG_THERMAL_ZONE_TEMP_CPU_P_CLU_1_OFFSET",
+      "SPBM_PKG_THERMAL_ZONE_TEMP_GPU_OFFSET",
+      "SPBM_PKG_THERMAL_ZONE_TEMP_SOC_OFFSET",
+      "SPBM_PKG_THERMAL_ZONE_TEMP_DLA_OFFSET"
+    ]
+  },
+  "fields": [
+    {
+      "name": "CPUEB_FASTDVFS_LOG_OFFSET",
+      "offset": 371712
+    },
+    {
+      "name": "CPUEB_PERFCNT_LOG_OFFSET",
+      "offset": 369664
+    },
+    {
+      "name": "CPUEB_CPPC_INTERFACE_OFFSET",
+      "offset": 377860
+    },
+    {
+      "name": "CPUEB_PL_INTERFACE_OFFSET",
+      "offset": 373760
+    },
+    {
+      "name": "CPUEB_TJPID_SLAVE0_OFFSET",
+      "offset": 87662592
+    },
+    {
+      "name": "CPUEB_TJPID_SLAVE1_OFFSET",
+      "offset": 188325888
+    },
+    {
+      "name": "SPBM_PL1_VAL_OS_OFFSET",
+      "offset": 256
+    },
+    {
+      "name": "SPBM_PL2_VAL_OS_OFFSET",
+      "offset": 260
+    },
+    {
+      "name": "SPBM_PL3_VAL_OS_OFFSET",
+      "offset": 264
+    },
+    {
+      "name": "SPBM_PL4_VAL_OS_OFFSET",
+      "offset": 268
+    },
+    {
+      "name": "SPBM_SYSPL1_VAL_OS_OFFSET",
+      "offset": 272
+    },
+    {
+      "name": "SPBM_SYSPL2_VAL_OS_OFFSET",
+      "offset": 276
+    },
+    {
+      "name": "SPBM_SYSPL3_VAL_OS_OFFSET",
+      "offset": 280
+    },
+    {
+      "name": "SPBM_SYSPL4_VAL_OS_OFFSET",
+      "offset": 284
+    },
+    {
+      "name": "SPBM_PL1_VAL_EC_OFFSET",
+      "offset": 288
+    },
+    {
+      "name": "SPBM_PL2_VAL_EC_OFFSET",
+      "offset": 292
+    },
+    {
+      "name": "SPBM_PL3_VAL_EC_OFFSET",
+      "offset": 296
+    },
+    {
+      "name": "SPBM_PL4_VAL_EC_OFFSET",
+      "offset": 300
+    },
+    {
+      "name": "SPBM_SYSPL1_VAL_EC_OFFSET",
+      "offset": 304
+    },
+    {
+      "name": "SPBM_SYSPL2_VAL_EC_OFFSET",
+      "offset": 308
+    },
+    {
+      "name": "SPBM_SYSPL3_VAL_EC_OFFSET",
+      "offset": 312
+    },
+    {
+      "name": "SPBM_SYSPL4_VAL_EC_OFFSET",
+      "offset": 316
+    },
+    {
+      "name": "SPBM_PL1_VAL_UEFI_OFFSET",
+      "offset": 320
+    },
+    {
+      "name": "SPBM_PL2_VAL_UEFI_OFFSET",
+      "offset": 324
+    },
+    {
+      "name": "SPBM_PL3_VAL_UEFI_OFFSET",
+      "offset": 328
+    },
+    {
+      "name": "SPBM_PL4_VAL_UEFI_OFFSET",
+      "offset": 332
+    },
+    {
+      "name": "SPBM_SYSPL1_VAL_UEFI_OFFSET",
+      "offset": 336
+    },
+    {
+      "name": "SPBM_SYSPL2_VAL_UEFI_OFFSET",
+      "offset": 340
+    },
+    {
+      "name": "SPBM_SYSPL3_VAL_UEFI_OFFSET",
+      "offset": 344
+    },
+    {
+      "name": "SPBM_SYSPL4_VAL_UEFI_OFFSET",
+      "offset": 348
+    },
+    {
+      "name": "SPBM_PL1_VAL_OFFSET",
+      "offset": 352
+    },
+    {
+      "name": "SPBM_PL2_VAL_OFFSET",
+      "offset": 356
+    },
+    {
+      "name": "SPBM_PL3_VAL_OFFSET",
+      "offset": 360
+    },
+    {
+      "name": "SPBM_PL4_VAL_OFFSET",
+      "offset": 364
+    },
+    {
+      "name": "SPBM_SYSPL1_VAL_OFFSET",
+      "offset": 368
+    },
+    {
+      "name": "SPBM_SYSPL2_VAL_OFFSET",
+      "offset": 372
+    },
+    {
+      "name": "SPBM_SYSPL3_VAL_OFFSET",
+      "offset": 376
+    },
+    {
+      "name": "SPBM_SYSPL4_VAL_OFFSET",
+      "offset": 380
+    },
+    {
+      "name": "SPBM_PL1_KP_OFFSET",
+      "offset": 512
+    },
+    {
+      "name": "SPBM_PL1_KI_OFFSET",
+      "offset": 516
+    },
+    {
+      "name": "SPBM_PL1_KD_OFFSET",
+      "offset": 520
+    },
+    {
+      "name": "SPBM_PL1_TAU_OFFSET",
+      "offset": 524
+    },
+    {
+      "name": "SPBM_PL2_KP_OFFSET",
+      "offset": 528
+    },
+    {
+      "name": "SPBM_PL2_KI_OFFSET",
+      "offset": 532
+    },
+    {
+      "name": "SPBM_PL2_KD_OFFSET",
+      "offset": 536
+    },
+    {
+      "name": "SPBM_PL2_TAU_OFFSET",
+      "offset": 540
+    },
+    {
+      "name": "SPBM_PL3_KP_OFFSET",
+      "offset": 544
+    },
+    {
+      "name": "SPBM_PL3_KI_OFFSET",
+      "offset": 548
+    },
+    {
+      "name": "SPBM_PL3_KD_OFFSET",
+      "offset": 552
+    },
+    {
+      "name": "SPBM_PL3_TAU_OFFSET",
+      "offset": 556
+    },
+    {
+      "name": "SPBM_SYSPL1_KP_OFFSET",
+      "offset": 560
+    },
+    {
+      "name": "SPBM_SYSPL1_KI_OFFSET",
+      "offset": 564
+    },
+    {
+      "name": "SPBM_SYSPL1_KD_OFFSET",
+      "offset": 568
+    },
+    {
+      "name": "SPBM_SYSPL1_TAU_OFFSET",
+      "offset": 572
+    },
+    {
+      "name": "SPBM_SYSPL2_KP_OFFSET",
+      "offset": 576
+    },
+    {
+      "name": "SPBM_SYSPL2_KI_OFFSET",
+      "offset": 580
+    },
+    {
+      "name": "SPBM_SYSPL2_KD_OFFSET",
+      "offset": 584
+    },
+    {
+      "name": "SPBM_SYSPL2_TAU_OFFSET",
+      "offset": 588
+    },
+    {
+      "name": "SPBM_SYSPL3_KP_OFFSET",
+      "offset": 592
+    },
+    {
+      "name": "SPBM_SYSPL3_KI_OFFSET",
+      "offset": 596
+    },
+    {
+      "name": "SPBM_SYSPL3_KD_OFFSET",
+      "offset": 600
+    },
+    {
+      "name": "SPBM_SYSPL3_TAU_OFFSET",
+      "offset": 604
+    },
+    {
+      "name": "SPBM_EDPC_CPUE_KP_OFFSET",
+      "offset": 608
+    },
+    {
+      "name": "SPBM_EDPC_CPUE_KI_OFFSET",
+      "offset": 612
+    },
+    {
+      "name": "SPBM_EDPC_CPUE_KD_OFFSET",
+      "offset": 616
+    },
+    {
+      "name": "SPBM_EDPC_CPUE_TAU_OFFSET",
+      "offset": 620
+    },
+    {
+      "name": "SPBM_EDPC_CPUP_KP_OFFSET",
+      "offset": 624
+    },
+    {
+      "name": "SPBM_EDPC_CPUP_KI_OFFSET",
+      "offset": 628
+    },
+    {
+      "name": "SPBM_EDPC_CPUP_KD_OFFSET",
+      "offset": 632
+    },
+    {
+      "name": "SPBM_EDPC_CPUP_TAU_OFFSET",
+      "offset": 636
+    },
+    {
+      "name": "SPBM_PL_EDPC_CPUE_VAL_OS_OFFSET",
+      "offset": 384
+    },
+    {
+      "name": "SPBM_PL_EDPC_CPUP_VAL_OS_OFFSET",
+      "offset": 388
+    },
+    {
+      "name": "SPBM_TE_SYS_TOTAL_TELEMETRY_OFFSET",
+      "offset": 768
+    },
+    {
+      "name": "SPBM_TE_SOC_PKG_TELEMETRY_OFFSET",
+      "offset": 772
+    },
+    {
+      "name": "SPBM_TE_C_AND_G_TELEMETRY_OFFSET",
+      "offset": 776
+    },
+    {
+      "name": "SPBM_TE_CPU_P_TELEMETRY_OFFSET",
+      "offset": 780
+    },
+    {
+      "name": "SPBM_TE_CPU_E_TELEMETRY_OFFSET",
+      "offset": 784
+    },
+    {
+      "name": "SPBM_TE_VCORE_TELEMETRY_OFFSET",
+      "offset": 788
+    },
+    {
+      "name": "SPBM_TE_VDDQ_TELEMETRY_OFFSET",
+      "offset": 792
+    },
+    {
+      "name": "SPBM_TE_CHR_TELEMETRY_OFFSET",
+      "offset": 796
+    },
+    {
+      "name": "SPBM_TE_GPC_OUT_OFFSET",
+      "offset": 800
+    },
+    {
+      "name": "SPBM_TE_TOTAL_GPU_OUT_OFFSET",
+      "offset": 804
+    },
+    {
+      "name": "SPBM_TE_GPC_IN_OFFSET",
+      "offset": 808
+    },
+    {
+      "name": "SPBM_TE_TOTAL_GPU_IN_OFFSET",
+      "offset": 812
+    },
+    {
+      "name": "SPBM_TE_TOTAL_SYS_IN_OFFSET",
+      "offset": 816
+    },
+    {
+      "name": "SPBM_TE_DLA_IN_OFFSET",
+      "offset": 820
+    },
+    {
+      "name": "SPBM_TE_PREREG_IN_OFFSET",
+      "offset": 824
+    },
+    {
+      "name": "SPBM_TE_DLA_OUT_OFFSET",
+      "offset": 828
+    },
+    {
+      "name": "SPBM_PL_CUR_LEVEL_STATUS_OFFSET",
+      "offset": 72
+    },
+    {
+      "name": "SPBM_PROCHOT_STATUS_OFFSET",
+      "offset": 76
+    },
+    {
+      "name": "SPBM_PID_MIN_WINNER_OFFSET",
+      "offset": 8
+    },
+    {
+      "name": "SPBM_PID_MIN_WINNER_LOCK_OFFSET",
+      "offset": 12
+    },
+    {
+      "name": "SPBM_PKG_ENERGY_VALUE_ACCUMULATE_OFFSET",
+      "offset": 836
+    },
+    {
+      "name": "SPBM_PKG_ENERGY_VALUE_OVERFLOW_OFFSET",
+      "offset": 840
+    },
+    {
+      "name": "SPBM_PKG_ENERGY_CLEAR_OVERFLOW_OFFSET",
+      "offset": 844
+    },
+    {
+      "name": "SPBM_CPU_E_ENERGY_VALUE_ACCUMULATE_OFFSET",
+      "offset": 848
+    },
+    {
+      "name": "SPBM_CPU_E_ENERGY_VALUE_OVERFLOW_OFFSET",
+      "offset": 852
+    },
+    {
+      "name": "SPBM_CPU_E_ENERGY_CLEAR_OVERFLOW_OFFSET",
+      "offset": 856
+    },
+    {
+      "name": "SPBM_CPU_P_ENERGY_VALUE_ACCUMULATE_OFFSET",
+      "offset": 860
+    },
+    {
+      "name": "SPBM_CPU_P_ENERGY_VALUE_OVERFLOW_OFFSET",
+      "offset": 864
+    },
+    {
+      "name": "SPBM_CPU_P_ENERGY_CLEAR_OVERFLOW_OFFSET",
+      "offset": 868
+    },
+    {
+      "name": "SPBM_GPC_ENERGY_VALUE_ACCUMULATE_OFFSET",
+      "offset": 872
+    },
+    {
+      "name": "SPBM_GPC_ENERGY_VALUE_OVERFLOW_OFFSET",
+      "offset": 876
+    },
+    {
+      "name": "SPBM_GPC_ENERGY_CLEAR_OVERFLOW_OFFSET",
+      "offset": 880
+    },
+    {
+      "name": "SPBM_GPM_ENERGY_VALUE_ACCUMULATE_OFFSET",
+      "offset": 884
+    },
+    {
+      "name": "SPBM_GPM_ENERGY_VALUE_OVERFLOW_OFFSET",
+      "offset": 888
+    },
+    {
+      "name": "SPBM_GPM_ENERGY_CLEAR_OVERFLOW_OFFSET",
+      "offset": 892
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_INST_OFFSET",
+      "offset": 1536
+    },
+    {
+      "name": "SPBM_BUDGET_GPU_INST_OFFSET",
+      "offset": 1540
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_ACCUMULATE_OFFSET",
+      "offset": 1544
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_VALUE_OVERFLOW_OFFSET",
+      "offset": 1548
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_CLEAR_OVERFLOW_OFFSET",
+      "offset": 1552
+    },
+    {
+      "name": "SPBM_BUDGET_GPU_ACCUMULATE_OFFSET",
+      "offset": 1556
+    },
+    {
+      "name": "SPBM_BUDGET_GPU_VALUE_OVERFLOW_OFFSET",
+      "offset": 1560
+    },
+    {
+      "name": "SPBM_BUDGET_GPU_CLEAR_OVERFLOW_OFFSET",
+      "offset": 1564
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_E_INST_OFFSET",
+      "offset": 1664
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_P_INST_OFFSET",
+      "offset": 1668
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_E_ACCUMULATE_OFFSET",
+      "offset": 1672
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_E_VALUE_OVERFLOW_OFFSET",
+      "offset": 1676
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_E_CLEAR_OVERFLOW_OFFSET",
+      "offset": 1680
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_P_ACCUMULATE_OFFSET",
+      "offset": 1684
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_P_VALUE_OVERFLOW_OFFSET",
+      "offset": 1688
+    },
+    {
+      "name": "SPBM_BUDGET_CPU_P_CLEAR_OVERFLOW_OFFSET",
+      "offset": 1692
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL1_OFFSET",
+      "offset": 1568
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL2_OFFSET",
+      "offset": 1572
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL3_OFFSET",
+      "offset": 1576
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL1_OFFSET",
+      "offset": 1580
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL2_OFFSET",
+      "offset": 1584
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL3_OFFSET",
+      "offset": 1588
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL1_ACCUMULATE_OFFSET",
+      "offset": 1592
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL1_VALUE_OVERFLOW_OFFSET",
+      "offset": 1596
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL1_CLEAR_OVERFLOW_OFFSET",
+      "offset": 1600
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL2_ACCUMULATE_OFFSET",
+      "offset": 1604
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL2_VALUE_OVERFLOW_OFFSET",
+      "offset": 1608
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL2_CLEAR_OVERFLOW_OFFSET",
+      "offset": 1612
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL3_ACCUMULATE_OFFSET",
+      "offset": 1616
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL3_VALUE_OVERFLOW_OFFSET",
+      "offset": 1620
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_PL3_CLEAR_OVERFLOW_OFFSET",
+      "offset": 1624
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL1_ACCUMULATE_OFFSET",
+      "offset": 1628
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL1_VALUE_OVERFLOW_OFFSET",
+      "offset": 1632
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL1_CLEAR_OVERFLOW_OFFSET",
+      "offset": 1636
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL2_ACCUMULATE_OFFSET",
+      "offset": 1640
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL2_VALUE_OVERFLOW_OFFSET",
+      "offset": 1644
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL2_CLEAR_OVERFLOW_OFFSET",
+      "offset": 1648
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL3_ACCUMULATE_OFFSET",
+      "offset": 1652
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL3_VALUE_OVERFLOW_OFFSET",
+      "offset": 1656
+    },
+    {
+      "name": "SPBM_PID_OUTPUT_SYSPL3_CLEAR_OVERFLOW_OFFSET",
+      "offset": 1660
+    },
+    {
+      "name": "SPBM_BUDGETER_LOOP_TIME_OFFSET",
+      "offset": 1280
+    },
+    {
+      "name": "SPBM_BUDGETER_W1_OFFSET",
+      "offset": 1284
+    },
+    {
+      "name": "SPBM_BUDGETER_W2_OFFSET",
+      "offset": 1288
+    },
+    {
+      "name": "SPBM_BUDGETER_W1_MIN_OFFSET",
+      "offset": 1292
+    },
+    {
+      "name": "SPBM_BUDGETER_W2_MIN_OFFSET",
+      "offset": 1296
+    },
+    {
+      "name": "SPBM_BUDGETER_W1_OVERSHOOT_OFFSET",
+      "offset": 1300
+    },
+    {
+      "name": "SPBM_BUDGETER_W2_OVERSHOOT_OFFSET",
+      "offset": 1304
+    },
+    {
+      "name": "SPBM_BUDGETER_W1_HUNGRY_OFFSET",
+      "offset": 1308
+    },
+    {
+      "name": "SPBM_BUDGETER_W2_HUNGRY_OFFSET",
+      "offset": 1312
+    },
+    {
+      "name": "SPBM_BUDGETER_W1_STEP_AWAY_OFFSET",
+      "offset": 1316
+    },
+    {
+      "name": "SPBM_BUDGETER_W2_STEP_AWAY_OFFSET",
+      "offset": 1320
+    },
+    {
+      "name": "SPBM_BUDGETER_W1_STEP_TOWARDS_OFFSET",
+      "offset": 1324
+    },
+    {
+      "name": "SPBM_BUDGETER_W2_STEP_TOWARDS_OFFSET",
+      "offset": 1328
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_LOOP_TIME_OFFSET",
+      "offset": 1332
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W1_OFFSET",
+      "offset": 1336
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W2_OFFSET",
+      "offset": 1340
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W1_MIN_OFFSET",
+      "offset": 1344
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W2_MIN_OFFSET",
+      "offset": 1348
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W1_OVERSHOOT_OFFSET",
+      "offset": 1352
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W2_OVERSHOOT_OFFSET",
+      "offset": 1356
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W1_HUNGRY_OFFSET",
+      "offset": 1360
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W2_HUNGRY_OFFSET",
+      "offset": 1364
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W1_STEP_AWAY_OFFSET",
+      "offset": 1368
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W2_STEP_AWAY_OFFSET",
+      "offset": 1372
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W1_STEP_TOWARDS_OFFSET",
+      "offset": 1376
+    },
+    {
+      "name": "SPBM_BUDGETER_EP_W2_STEP_TOWARDS_OFFSET",
+      "offset": 1380
+    },
+    {
+      "name": "SPBM_PL1_II_LIMIT_LOWER_OFFSET",
+      "offset": 1792
+    },
+    {
+      "name": "SPBM_PL1_II_LIMIT_UPPER_OFFSET",
+      "offset": 1796
+    },
+    {
+      "name": "SPBM_PL1_LIMIT_LOW_OFFSET",
+      "offset": 1800
+    },
+    {
+      "name": "SPBM_PL1_LIMIT_HIGH_OFFSET",
+      "offset": 1804
+    },
+    {
+      "name": "SPBM_PL2_II_LIMIT_LOWER_OFFSET",
+      "offset": 1808
+    },
+    {
+      "name": "SPBM_PL2_II_LIMIT_UPPER_OFFSET",
+      "offset": 1812
+    },
+    {
+      "name": "SPBM_PL2_LIMIT_LOW_OFFSET",
+      "offset": 1816
+    },
+    {
+      "name": "SPBM_PL2_LIMIT_HIGH_OFFSET",
+      "offset": 1820
+    },
+    {
+      "name": "SPBM_PL3_II_LIMIT_LOWER_OFFSET",
+      "offset": 1824
+    },
+    {
+      "name": "SPBM_PL3_II_LIMIT_UPPER_OFFSET",
+      "offset": 1828
+    },
+    {
+      "name": "SPBM_PL3_LIMIT_LOW_OFFSET",
+      "offset": 1832
+    },
+    {
+      "name": "SPBM_PL3_LIMIT_HIGH_OFFSET",
+      "offset": 1836
+    },
+    {
+      "name": "SPBM_SYSPL1_II_LIMIT_LOWER_OFFSET",
+      "offset": 1840
+    },
+    {
+      "name": "SPBM_SYSPL1_II_LIMIT_UPPER_OFFSET",
+      "offset": 1844
+    },
+    {
+      "name": "SPBM_SYSPL1_LIMIT_LOW_OFFSET",
+      "offset": 1848
+    },
+    {
+      "name": "SPBM_SYSPL1_LIMIT_HIGH_OFFSET",
+      "offset": 1852
+    },
+    {
+      "name": "SPBM_SYSPL2_II_LIMIT_LOWER_OFFSET",
+      "offset": 1856
+    },
+    {
+      "name": "SPBM_SYSPL2_II_LIMIT_UPPER_OFFSET",
+      "offset": 1860
+    },
+    {
+      "name": "SPBM_SYSPL2_LIMIT_LOW_OFFSET",
+      "offset": 1864
+    },
+    {
+      "name": "SPBM_SYSPL2_LIMIT_HIGH_OFFSET",
+      "offset": 1868
+    },
+    {
+      "name": "SPBM_SYSPL3_II_LIMIT_LOWER_OFFSET",
+      "offset": 1872
+    },
+    {
+      "name": "SPBM_SYSPL3_II_LIMIT_UPPER_OFFSET",
+      "offset": 1876
+    },
+    {
+      "name": "SPBM_SYSPL3_LIMIT_LOW_OFFSET",
+      "offset": 1880
+    },
+    {
+      "name": "SPBM_SYSPL3_LIMIT_HIGH_OFFSET",
+      "offset": 1884
+    },
+    {
+      "name": "SPBM_PWR_AVG_EWMA_S_PL1_OFFSET",
+      "offset": 2048
+    },
+    {
+      "name": "SPBM_PWR_AVG_EWMA_S_PL2_OFFSET",
+      "offset": 2052
+    },
+    {
+      "name": "SPBM_PWR_AVG_EWMA_S_PL3_OFFSET",
+      "offset": 2056
+    },
+    {
+      "name": "SPBM_PWR_AVG_EWMA_S_SYSPL1_OFFSET",
+      "offset": 2060
+    },
+    {
+      "name": "SPBM_PWR_AVG_EWMA_S_SYSPL2_OFFSET",
+      "offset": 2064
+    },
+    {
+      "name": "SPBM_PWR_AVG_EWMA_S_SYSPL3_OFFSET",
+      "offset": 2068
+    },
+    {
+      "name": "SPBM_PKG_TJ_MAX_OFFSET",
+      "offset": 2072
+    },
+    {
+      "name": "SPBM_PKG_TJ_MAX_C_OFFSET",
+      "offset": 2076
+    },
+    {
+      "name": "SPBM_PKG_THERMAL_ZONE_TEMP_CPU_E_CLU_0_OFFSET",
+      "offset": 2080
+    },
+    {
+      "name": "SPBM_PKG_THERMAL_ZONE_TEMP_CPU_P_CLU_0_OFFSET",
+      "offset": 2084
+    },
+    {
+      "name": "SPBM_PKG_THERMAL_ZONE_TEMP_CPU_E_CLU_1_OFFSET",
+      "offset": 2088
+    },
+    {
+      "name": "SPBM_PKG_THERMAL_ZONE_TEMP_CPU_P_CLU_1_OFFSET",
+      "offset": 2092
+    },
+    {
+      "name": "SPBM_PKG_THERMAL_ZONE_TEMP_GPU_OFFSET",
+      "offset": 2096
+    },
+    {
+      "name": "SPBM_PKG_THERMAL_ZONE_TEMP_SOC_OFFSET",
+      "offset": 2100
+    },
+    {
+      "name": "SPBM_PKG_THERMAL_ZONE_TEMP_DLA_OFFSET",
+      "offset": 2104
+    }
+  ],
+  "missing": "nothing that the artifact states: the base above is derived from the firmware's own resource descriptor and cross-checked against the _CPC register addresses. What is still absent is a run that writes through the window on real hardware.",
+  "base": {
+    "value": 85393408,
+    "how": "\\_SB.MTEL (NVDA8800) declares Memory32Fixed(0x05170000, 0x00060000) in its _CRS \u2014 the block that holds CPUEB. The register addresses the processor _CPC objects return land inside it: 0x051CC404 - 0x05C404 = 0x05170000, with 0x5C404 the CPPC_INTERFACE offset this same table names for CPUEB.",
+    "checks": [
+      "0x5170000 + 0x5C404 == 0x51CC404 (the first _CPC register the DSDT returns)",
+      "0x5170000 + 0x60000 == 0x51D0000 (the end of the region MTEL declares)",
+      "the CPUEB component's own size (582476 bytes) is larger than that window: the declared region bounds where the registers are reached, not how big the firmware component is"
+    ],
+    "limits": "the arithmetic fixes where the _CPC registers are read; it does not establish a writable SPBM block, its units, or how SPBM arbitrates an OS request. The DSDT lists CPUEB and SPBM separately and declares MTEL's resources ReadOnly."
+  },
+  "source_sha256": "b0c2a9aa95c50b8e93345f89538a53a5973b8fea36a786ad0608b5cbef8697f5"
+}

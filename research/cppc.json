@@ -1,0 +1,87 @@
+{
+  "source": {
+    "table": "DSDT, captured under the emulator (vendor UEFI 2.158.15)",
+    "sha256": "b0c2a9aa95c50b8e93345f89538a53a5973b8fea36a786ad0608b5cbef8697f5",
+    "package": "23 elements, NumEntries 23 then Revision 3, then registers"
+  },
+  "element_map": [
+    {
+      "index": 2,
+      "field": "HighestPerformance",
+      "address": "0x051CC404"
+    },
+    {
+      "index": 3,
+      "field": "NominalPerformance",
+      "address": "0x051CC408"
+    },
+    {
+      "index": 4,
+      "field": "LowestNonlinearPerformance",
+      "address": "0x051CC40C"
+    },
+    {
+      "index": 5,
+      "field": "LowestPerformance",
+      "address": "0x051CC410"
+    },
+    {
+      "index": 6,
+      "field": "GuaranteedPerformanceRegister",
+      "address": "0x051CC414"
+    },
+    {
+      "index": 7,
+      "field": "DesiredPerformanceRegister",
+      "address": "0x051CC418"
+    },
+    {
+      "index": 8,
+      "field": "MinimumPerformanceRegister",
+      "address": "0x05150480"
+    },
+    {
+      "index": 9,
+      "field": "MaximumPerformanceRegister",
+      "address": "0x05150500"
+    },
+    {
+      "index": 10,
+      "field": "PerformanceReductionToleranceRegister",
+      "address": "0x051CC424"
+    },
+    {
+      "index": 11,
+      "field": "TimeWindowRegister",
+      "address": "0x051CC428"
+    },
+    {
+      "index": 12,
+      "field": "CounterWraparoundTime",
+      "address": "0x051CC42C"
+    },
+    {
+      "index": 13,
+      "field": "ReferencePerformanceCounterRegister",
+      "address": "FFixedHW(0x1)"
+    },
+    {
+      "index": 14,
+      "field": "DeliveredPerformanceCounterRegister",
+      "address": "FFixedHW(0x0)"
+    },
+    {
+      "index": 15,
+      "field": "PerformanceLimitedRegister",
+      "address": "0x051CC430"
+    }
+  ],
+  "notes": [
+    "the first four are performance *values* delivered as registers rather than integers, which the specification allows; the kernel reads them through ACPICA at runtime",
+    "the minimum and maximum request registers are outside the 0x05170000+0x60000 window MTEL declares: 0x05150480 and 0x05150500 sit in a different block, so a profile that only backs MTEL's window cannot serve them",
+    "the reference and delivered counters are Functional Fixed Hardware descriptors, not adjacent memory: they are not cells a profile can seed"
+  ],
+  "how_derived": "evaluated with acpiexec against the captured DSDT and cross-read from the iasl disassembly; the ordering is the specification's revision-3 package order",
+  "not_proved": "that cppc_cpufreq binds, or that any value written here changes a frequency: the guest currently reports 'cpufreq none', and the reason has not been isolated",
+  "values_are_registers_not_literals": "the 23-element package is an element *map*, not a value list: element 0 is the count (23), element 1 is the revision (3), and the rest are register descriptors (opcode 0x11 Buffer) pointing at where the OS reads performance and frequency values. So the DSDT does not declare a maximum frequency; the value comes from the registers, which is why cpufreq on a unit reports what it reports (2.808 GHz there)."
+}

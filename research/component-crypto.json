@@ -1,0 +1,131 @@
+{
+  "source": {
+    "artifact": "the 2.158.15 capsule's slot image",
+    "sha256": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78",
+    "coordinate_space": "slot image; the metadata block is the 0xd0-byte sub-image header at the offset the descriptor chain gives"
+  },
+  "what_this_is": "the per-component metadata block that precedes each encrypted payload, read as fields at their offsets. Nothing here is decrypted",
+  "observed_structure": {
+    "header": "version 1, length 0xd0, then a 16-byte label at +0x10 (e.g. 'BL31', 'SPBM_FMC-1.0.0')",
+    "at_0x40": "12 bytes, unique per component",
+    "at_0x50": "the ASCII tag 'AAD' plus padding",
+    "at_0x60": "16 bytes, unique per component",
+    "at_0x90": "the ASCII tag 'AAD' again",
+    "at_0xb0": "32 bytes, unique per component"
+  },
+  "reading": "a 12-byte nonce and a 16-byte tag beside an 'AAD' label is the shape of an AEAD construction (AES-GCM uses a 12-byte IV and a 16-byte tag). [INFERENCE] on the cipher: the artifacts name no algorithm and no key id.",
+  "why_this_closes_the_offline_route": [
+    "all 15 metadata blocks carry distinct nonces, so there is no keystream or counter reuse to exploit",
+    "the payloads are authenticated, so a modified or truncated image is detectable \u2014 no oracle",
+    "no standard compressor header is present at the body (zlib, lzma, xz, zstd, lz4 all refuse), so it is not merely compressed",
+    "one capsule boots on every unit, so the key is SoC-family, not per-device, and lives where no artifact reaches: mask ROM or fuses"
+  ],
+  "what_is_not_claimed": "that the cipher is AES-GCM, that a key exists in any artifact, or that the payloads are undecryptable in principle. They are undecryptable from these bytes without the key, which is a different statement.",
+  "components": [
+    {
+      "component": "ACC",
+      "label": "ACC-VAD-1.0.0",
+      "nonce": "62751458bf79f48cbe3d798d",
+      "tag": "d54d911008503322120c3510db945e2e",
+      "digest_32": "d0e377d9103c5d71cbf4789509d24aa4943a8e5e1e0b28618e6552b594918d6c"
+    },
+    {
+      "component": "PLL",
+      "label": "PLL_CLK-1.0.0",
+      "nonce": "e9fb691112db2bada979f81f",
+      "tag": "7be34789b94f5ff16836ae84764d2cf1",
+      "digest_32": "6ebb372c63271eb08a75d67b6978462951c9cdff0663de1792b91fc2cbfe79b7"
+    },
+    {
+      "component": "DCC",
+      "label": "DCC-1.0.0",
+      "nonce": "153f6c66799610ca32062a2c",
+      "tag": "56b66e51c0cbe76b338c79d857f34bf6",
+      "digest_32": "f963a0141bbc9dd49ce94d61d45598a78ab4f2151e5d6df08bfe26035274e1eb"
+    },
+    {
+      "component": "SSPM",
+      "label": "SSPM_FMC-1.0.0",
+      "nonce": "3f2988967f1596e5e6ff381c",
+      "tag": "971cbc5017884679e7f300f38519c385",
+      "digest_32": "0f1406645063a7da50c951baf145e98467a1b0e84c51e2605bf681369afa075c"
+    },
+    {
+      "component": "HFRP",
+      "label": "HFRP_FMC-1.0.0",
+      "nonce": "177d0d77f0058f914deda06e",
+      "tag": "4993470829e254838ac01d35520dbad9",
+      "digest_32": "c1f2a3bc6950ab2f9f40a737e5f3247f8e44340f1b0b710befbf8e5bd952ad8f"
+    },
+    {
+      "component": "CPUEB",
+      "label": "CPUEB_FMC-1.0.0",
+      "nonce": "a46783aeae08604f38526c12",
+      "tag": "fd867a635c533336e68ebd44e3fce26d",
+      "digest_32": "b998f345f4cb459311f077d116d4e96ef2c19325eb4402d87a8aff1b958cd3c3"
+    },
+    {
+      "component": "DPM",
+      "label": "DPM_FMC-1.0.0",
+      "nonce": "82f75c75de8305923071e8a5",
+      "tag": "0a50a281d7f8cbe1260fa12cab9609d5",
+      "digest_32": "a78d6ab4852c37e4703988321cb1d7db1d5d880462f1190b8e5bfaacbe0a2ecb"
+    },
+    {
+      "component": "SPM",
+      "label": "SPM_FMC-1.0.0",
+      "nonce": "2f3858e2b592b554ac39f3c2",
+      "tag": "edc04cfe7072d7c52f3bb52171a44600",
+      "digest_32": "654131017f34e64a9c71429b95563633a0649925d278e8a535f2003981703d41"
+    },
+    {
+      "component": "SPBM",
+      "label": "SPBM_FMC-1.0.0",
+      "nonce": "e51b02695fd0f096486d683a",
+      "tag": "e18eaa415740174e6bbbdae563cc0ba8",
+      "digest_32": "207407d01df11388d57dd5f840fb0a339bbadf722b63be1b37328b2ad0944ab0"
+    },
+    {
+      "component": "USB4",
+      "label": "USB4-1.0.0",
+      "nonce": "44c355975a80433b7b954ced",
+      "tag": "68e885dd10efc7017853628acefdc193",
+      "digest_32": "78c9998358f599037893ac32affe8a7a2521c99976b163092e191687b1136370"
+    },
+    {
+      "component": "BL31",
+      "label": "BL31",
+      "nonce": "a7e62e0322b46bdecc4d7c9e",
+      "tag": "bd21f8d585e536adf8e9cb0411f2f72c",
+      "digest_32": "1bd06da84a9bd08f1085bad35232c226dbd5ae42897876f80446e0e15deee9fd"
+    },
+    {
+      "component": "BL32",
+      "label": "BL32",
+      "nonce": "8db4ba47b5cf053fa17051c6",
+      "tag": "265c0a7475c356e06aaaa722010507c9",
+      "digest_32": "08abfc0c46260a0278001b6b04ffba74ac0610e5560521cc66238bce490971af"
+    },
+    {
+      "component": "TPM",
+      "label": "SOCTS",
+      "nonce": "4da9017d247c3768755cdcb8",
+      "tag": "79cb3ff337a0577e5cd964b73e3a98ac",
+      "digest_32": "53d42b49e1e4d0d28a3fbbb1622b257738d834d26fe0b7105d3bf188c554d065"
+    },
+    {
+      "component": "GPU",
+      "label": "GFW",
+      "nonce": "fa65ccf0911c5d3ecd0f9582",
+      "tag": "c834431d56ff6e7284c3a6ea7ff1617c",
+      "digest_32": "7544cca3ebeb6a74cbde53f5607c8ada2dc0e0bb6db65c01fead212c6adf85f0"
+    },
+    {
+      "component": "OSR_FMC",
+      "label": "OSROOT_FMC-0.1.0",
+      "nonce": "0551f29f7201a7c32d19af15",
+      "tag": "0d5a6c353a5c47a9e9ba8d4cd1872432",
+      "digest_32": "4f1a0f2d26900d84ba7a83e0dfed1e2ce51943f3d4c14466cbc68af064819928"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "source": {
+    "how": "read-only: /sys/bus/arm_ffa/devices on a unit running BIOS 5.36_0ACUM027",
+    "kconfig": {
+      "CONFIG_ACPI_FFH": "y",
+      "CONFIG_ARM_FFA_TRANSPORT": "y",
+      "CONFIG_ARM_FFA_SMCCC": "y"
+    },
+    "note": "no payload was run and nothing was written; sysfs reads only"
+  },
+  "what_this_is": "the FF-A partitions the live firmware enumerates, by partition id and UUID. It is the map the manifests describe and the ACPI methods address.",
+  "identifications": {
+    "0x8003 / 884a63a0-3285-4120-83aa-eec008a0a546": "the fan service: this UUID is exactly the two 64-bit constants the DSDT puts in x2/x3 of SMC 0xC400008D, read little-endian. Present on ACUM027.",
+    "0x8003 / 23ea63ed-b593-46ea-b027-8924df88e92f": "the RTC service the FFH mailbox in \\_SB.FFA0 addresses",
+    "0x8002 / 3cbb7dc8-f848-bc47-222b-9da596629a96 and c87dbb3c-47bc-48f8-a59d-2b22969a6296": "the Flash Service: the two 16-byte halves of the FLASH manifest's uuid property, i.e. that property is two UUIDs, not one",
+    "0x8004 / 9b12fb8a-6047-ca64-88c8-18864a6caa4c": "Standalone MM (STMM)"
+  },
+  "byte_order_finding": "the FLASH manifest stores its two UUIDs in canonical byte order, while STMM's manifest stores its UUID as four **little-endian 32-bit words**: reversing each 4-byte group of 8afb129b64ca47608618c8884caa6c4a gives 9b12fb8a6047ca6488c818864a6caa4c, which is the live value. The vendor data is inconsistent between components, which is why a single decode was wrong before.",
+  "consequence": "the fan service exists on ACUM027 even though its DSDT declares no FAN0 device, so the module that issues the SMC directly is a candidate there \u2014 unproven until a unit answers.",
+  "partitions": {
+    "0x8001": [
+      "a462b817-af4f-0618-9a08-b38661383558",
+      "17b862a4-1806-4faf-86b3-089a58353861"
+    ],
+    "0x8002": [
+      "c87dbb3c-47bc-48f8-a59d-2b22969a6296",
+      "3cbb7dc8-f848-bc47-222b-9da596629a96"
+    ],
+    "0x8003": [
+      "31f56da7-593c-4d72-a4b3-8fc7171ac073",
+      "7697530c-d079-4ec1-a4c4-cf0d2bdc93fa",
+      "65467f50-827f-4e4f-8770-dbf4c3f77f45",
+      "e3168a99-4a57-4a2b-8c5e-11bcfec73406",
+      "0bd66c7c-a288-48a6-afc8-e2200c03eb62",
+      "6c44c879-d0bc-41d3-bef6-60432182dfe6",
+      "23ea63ed-b593-46ea-b027-8924df88e92f",
+      "884a63a0-3285-4120-83aa-eec008a0a546",
+      "78b04d80-d21d-4986-8acb-467b60247ac5",
+      "a3e7f7cf-66ca-43b9-9b6e-9947b8e2a511",
+      "b510b3a3-59f6-4054-ba7a-ff2eb1eac765",
+      "330c1273-fde5-4757-9819-5b6539037502",
+      "7157addf-2fbe-4c63-ae95-efac16e3b01c",
+      "25cb5207-ac36-427d-aaef-3aa78877d27e"
+    ],
+    "0x8004": [
+      "9b12fb8a-6047-ca64-88c8-18864a6caa4c"
+    ]
+  },
+  "drivers": {
+    "884a63a0-3285-4120-83aa-eec008a0a546": "none",
+    "23ea63ed-b593-46ea-b027-8924df88e92f": "nvidia-ffa-ec",
+    "b510b3a3-59f6-4054-ba7a-ff2eb1eac765": "nvidia-ffa-notify"
+  }
+}

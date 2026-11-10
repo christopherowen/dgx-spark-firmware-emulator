@@ -1,0 +1,61 @@
+{
+  "source": {
+    "artifact": "LVFS firmware.xml, the three capsules held, and the vendor recovery archive",
+    "coordinate_space": "not applicable: this record inventories artifacts, not offsets",
+    "note": "measurements quoted from component maps are in capsule file offsets where stated"
+  },
+  "schema": 1,
+  "question": "Which published artifact, if any, actually contains the SoC parts this repository cannot see (BL31, BL32, ESPI)?",
+  "established": false,
+  "status": "the recovery image is a full part image with two slots; it does not ship BL31, BL32 or ESPI at their map offsets, but it does carry eSPI-related code and the BL31 manifest, so static work continues without hardware",
+  "lvfs_inventory": {
+    "source": "https://cdn.fwupd.org/downloads/firmware.xml.gz (fetched 2026-11-08)",
+    "components": [
+      {
+        "id": "com.nvidia.dgx.spark.socfw.firmware",
+        "version": "0x2009e0f",
+        "cab": "https://fwupd.org/downloads/f895952896ffed39fc167de0f86eab40609b5baf9debcf12caa720123a915416-socfw.cab",
+        "note": "the same cabinet this repository already prepares; it is a partial update"
+      },
+      {
+        "id": "com.nvidia.dgx.spark.ec.firmware",
+        "version": "0x3000d07",
+        "cab": "https://fwupd.org/downloads/c3fab69bb1ef6d22e1a1d28a0bbc05319fb321bf81af4fd574349d2b0b23fa30-ec_fused.cab",
+        "inspected": "519,263-byte ec_fused.cap; sparse fused image (shannon 1.56), one 'espi' substring, no eSPI protocol strings, no PE/ELF header \u2014 the EC side of the eSPI link is not readable from it"
+      },
+      {
+        "id": "com.nvidia.dgx.spark.usbpd2.firmware",
+        "version": "0x519",
+        "cab": "https://fwupd.org/downloads/80f10a661e8d231a0e5804e77f99ca9a6a8d846ea82443258f05d8c77c2089a8-usbpd.cab",
+        "inspected": "archive carries a README, a signed .jcat and metainfo only at the top level"
+      }
+    ]
+  },
+  "component_maps": {
+    "method": "tools/container.py over each prepared capsule",
+    "finding": "all three releases (2.155.11, 2.158.15, 4.1.0) ship the same 29-entry map and erase the same 13 regions, including BL31, BL32, ESPI, FLASH, SCP, TPM, BCT, DDRFSK and MISC"
+  },
+  "recovery_image": {
+    "url": "https://us.download.nvidia.com/Windows/Quadro_Certified/dgx-spark/1.155.49/dgx-spark-recovery-image-1.155.49.tar.gz",
+    "size": 6372258034,
+    "sha256": "43ba19088676550a76c1a25cd9aa25cbb01cbd6bab572b0d8b391a8b6f4b5de7",
+    "status": "downloaded and inspected (the archive itself is never committed)",
+    "firmware_members": [
+      "usbimg.customer/spirom/dgx_spark_ec_fused.bin (64 MiB)",
+      "usbimg.customer/spirom/dgx_spark_ec_nofuse.bin (64 MiB)",
+      "usbimg.customer/spirom/yukon_spark_ec_nofuse.bin (64 MiB)",
+      "usbimg.customer/usb/fw/{socfw,ec_fused,ec_nofuse,tpm,usbpd,yukon_socfw,yukon_ec_nofuse}.cap"
+    ],
+    "finding": "the three spirom/*.bin files are whole 64 MiB images of the board's part, laid out as two 32 MiB slots (A/B). The capsule map's offsets apply inside each slot: 11 of 29 components carry data (SoCFSVN, ACC, PLL, SSPM, HFRP, CPUEB, DPM, SPM, SPBM, OSR_DCT, OSR_FW) and the same 13 are erased \u2014 BL31, BL32, ESPI, FLASH, SCP, TPM, BCT, DDRFSK, MISC, the two SVN records. So even the recovery media ships those regions as placeholders, and the firmware that boots the board must obtain them elsewhere or hold them in ROM.",
+    "what_the_image_does_carry": [
+      "an 18 KiB code blob in each slot at 0x9dda37..0x9e2378 which names the service explicitly ('ERROR: Unexpected cmd id for eSPI service: %d') alongside FF-A manifest strings (arm,ffa-manifest-device-regions, tpm_spi, clk_reg_offset) \u2014 the eSPI path exists as code in this image, just not at the map's ESPI offset",
+      "a BL31 manifest at 0x6e6380 per slot: size 0x3fc04, a name field 'BL31' and a hash, with 0xdeadbeef markers; the image it describes is not stored at the map offset",
+      "a 0x6d000-byte firmware volume at 0xa582b0 per slot whose first file is not an NVAR record, so the variable store is not inside it"
+    ]
+  },
+  "what_would_close_it": [
+    "the recovery image containing the SoC firmware partitions (being checked)",
+    "a capsule or readback that ships them populated",
+    "a read of any unit's flash part, which needs no boot and no exploit"
+  ]
+}

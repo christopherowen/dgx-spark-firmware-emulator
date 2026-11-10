@@ -1,4 +1,8 @@
 {
+  "source": {
+    "artifact": "external URLs, read on the date in `checked_on`",
+    "coordinate_space": "not applicable"
+  },
   "checked_on": "2026-10-28",
   "sources": [
     {

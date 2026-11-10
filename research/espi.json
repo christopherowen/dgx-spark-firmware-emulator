@@ -1,0 +1,46 @@
+{
+  "source": {
+    "artifact": "the 2.158.15 capsule (component `ESPI`) plus the eSPI Service manifest in research/spkg-manifest.json",
+    "coordinate_space": "slot image; the eSPI Service body begins at the component's body offset (0x2b0)",
+    "capsule_sha256_from": "research/spkg-manifest.json",
+    "note": "the manifest names the partition (id 0x8003, 64-bit calls) and its controller window; it does not document the wire format of the service's own messages",
+    "capsule_sha256": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78"
+  },
+  "schema": 1,
+  "question": "Does this repository contain the firmware that implements the board's eSPI path, and can a bounded model be justified from it?",
+  "established": false,
+  "status": "present and plaintext: the capsule's ESPI component is 275 368 bytes and its image (266 488 bytes, sha256 67b9650b...) is readable AArch64. An earlier version of this record said the partition ships erased; that was the extraction defect, not the artifact.",
+  "searched": [
+    {
+      "artifact": "firmware/prepared/2.155.11/uefi.fd",
+      "sha256": "5ee97b880e8bda20ab3cba0fc60eb747225f17a55a699029141207f573963733",
+      "method": "count of eSPI strings and of the controller address 0x16050000 as 4- and 8-byte values, then module attribution by offset",
+      "finding": "no eSPI string except one 'ESPI' in a table; 0x16050000 occurs three times, in modules 632eccea-9930-4829-9819-aa3360ab6866 (0x65dd4f, 0x65e2d4) and c118f50d-391d-45f4-b3d3-11bc931aa56d (0x6bd2e0) \u2014 resource descriptions, not a service"
+    },
+    {
+      "artifact": "firmware/prepared/2.155.11/stmm.pkg",
+      "sha256": "ae81c97a13fb31222b67f6391a1c4145d25c4ec433896a5d21a6b4a28533f90d",
+      "method": "the same counts",
+      "finding": "no eSPI string and no controller address: the standalone MM image this runner boots is not the eSPI service"
+    },
+    {
+      "artifact": "firmware/prepared/2.155.11/socfw.cap",
+      "sha256": "0985b848b1708421a399935b7f9b1afb5469588db6f26bd2953c6013f3db70ff",
+      "method": "capsule_payload() to strip the FMP/MSS1 wrappers, count of FILEINFO and SF_BOOT markers, then string search and PE validation at the hit",
+      "finding": "the SF_BOOT payload carries a 29-entry map of the device's firmware partitions. ESPI is one of them \u2014 0x433a8 bytes at 0x803000 \u2014 but that region is erased in the shipped capsule (all 0xff), as are 13 of the 29 entries including BL31, BL32, FLASH and SCP. The eSPI/FAS strings found earlier at 0x9e0f40 sit in an unnamed gap between partitions, not in the ESPI region."
+    }
+  ],
+  "why_not_modelled": [
+    "the runner boots the UEFI and standalone MM images only; nothing in a boot reaches the eSPI service",
+    "a model needs the service's transaction contract (command ids, payload shapes, completion and error forms), which lives in the unextracted component",
+    "returning success for eSPI requests would invent behaviour, and no measured result depends on it"
+  ],
+  "what_would_close_it": [
+    "a capsule or readback that actually ships the ESPI partition (this one erases it)",
+    "or a raw read of the part, where the partition is present at the offset the map names",
+    "then the same rule as everywhere else: characterise its requests, model what was observed"
+  ],
+  "confidence": "high: the map is parsed, the ESPI entry is named, and its bytes are erased in this artifact",
+  "next_step_caveat": "The table's offsets are read as offsets into the payload, which is what makes the erasure check possible. Whether the same numbers are also the offsets on the flash part is not established here; a readback of a real part would settle it.",
+  "established_detail": "the image decodes to an FF-A manifest ('eSPI Service', partition 0x8003) with 21 SPBM register ids, including the power-limit block \u2014 see research/espi-spbm-registers.json"
+}

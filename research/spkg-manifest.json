@@ -1,0 +1,828 @@
+{
+  "source": {
+    "artifact": "the 2.158.15 capsule's slot image",
+    "capsule_sha256": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78",
+    "header_position": 2109440,
+    "coordinate_space": "slot image; the package body begins at the component's body offset (0x2b0)"
+  },
+  "what_this_is": "the signed-package header and Arm FF-A partition manifest of STMM, FLASH and ESPI, read from the component's own declared body offset",
+  "connection": "the ESPI manifest's partition id is 0x8003, which is the endpoint the ACPI fan methods name. The fan path and this manifest therefore describe one component; the fan interface record and this one agree without either being used to derive the other.",
+  "components": {
+    "STMM": {
+      "body_offset": 688,
+      "package": {
+        "version": 2,
+        "manifest": [
+          4096,
+          1650
+        ],
+        "image": [
+          8192,
+          446464
+        ]
+      },
+      "image_ends_at_body_end": true,
+      "partition": {
+        "compatible": "arm,ffa-manifest-1.0",
+        "description": "StandaloneMm Firmware",
+        "ffa-version": 65538,
+        "uuid": [
+          2331710107,
+          1690978144,
+          2249771144,
+          1286237258
+        ],
+        "id": 32772,
+        "auxiliary-id": 174,
+        "stream-endpoint-ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "execution-ctx-count": 1,
+        "exception-level": 2,
+        "execution-state": 0,
+        "load-address": 2476998656,
+        "entrypoint-offset": 8192,
+        "reserved-pages-count": 0,
+        "xlat-granule": 0,
+        "boot-order": 255,
+        "messaging-method": 1539,
+        "run-time-model": 0,
+        "ns-interrupts-action": 0,
+        "other-s-interrupts-action": 0,
+        "gp-register-num": 0
+      },
+      "regions": [
+        {
+          "node": "//nv-sp-params",
+          "compatible": "nvidia,th500-sp-params",
+          "enabled-sockets": 0,
+          "enabled-cores": "",
+          "reserved-core": 0,
+          "enabled-mc-channels": "",
+          "enabled-pcie": "",
+          "enabled-uphy": "",
+          "enabled-nvlink": "",
+          "tzdram-base": 0,
+          "tzdram-size": 0,
+          "measured": {
+            "compatible": [
+              484,
+              23
+            ],
+            "enabled-sockets": [
+              520,
+              4
+            ],
+            "enabled-cores": [
+              536,
+              64
+            ],
+            "reserved-core": [
+              612,
+              4
+            ],
+            "enabled-mc-channels": [
+              628,
+              16
+            ],
+            "enabled-pcie": [
+              656,
+              16
+            ],
+            "enabled-uphy": [
+              684,
+              16
+            ],
+            "enabled-nvlink": [
+              712,
+              16
+            ],
+            "tzdram-base": [
+              740,
+              8
+            ],
+            "tzdram-size": [
+              760,
+              8
+            ]
+          }
+        },
+        {
+          "node": "//memory-regions",
+          "compatible": "arm,ffa-manifest-memory-regions",
+          "measured": {
+            "compatible": [
+              804,
+              32
+            ]
+          }
+        },
+        {
+          "node": "//memory-regions/stage1-entries",
+          "description": "stage1-entries",
+          "pages-count": 96,
+          "base-address": 2483945472,
+          "attributes": 3,
+          "measured": {
+            "description": [
+              868,
+              15
+            ],
+            "pages-count": [
+              896,
+              4
+            ],
+            "base-address": [
+              912,
+              8
+            ],
+            "attributes": [
+              932,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//memory-regions/stmmns-memory",
+          "description": "stmmns-memory",
+          "pages-count": 32,
+          "base-address": 2470313984,
+          "attributes": 11,
+          "nv-non-secure-memory": 1,
+          "nv-erst-cached-pages-count": 0,
+          "nv-erst-uncached-pages-count": 0,
+          "measured": {
+            "description": [
+              972,
+              14
+            ],
+            "pages-count": [
+              1000,
+              4
+            ],
+            "base-address": [
+              1016,
+              8
+            ],
+            "attributes": [
+              1036,
+              4
+            ],
+            "nv-non-secure-memory": [
+              1052,
+              4
+            ],
+            "nv-erst-cached-pages-count": [
+              1068,
+              4
+            ],
+            "nv-erst-uncached-pages-count": [
+              1084,
+              4
+            ]
+          }
+        }
+      ],
+      "inspection_status": "complete: header and manifest decoded; image not interpreted",
+      "decoded_evidence": {
+        "package_fields": "tools/spkg.package",
+        "manifest_fields": "tools/spkg.manifest"
+      },
+      "uuid_measured": {
+        "length": 16,
+        "first_uuid_be": "8afb129b-64ca-4760-8618-c8884caa6c4a",
+        "first_uuid_le": "9b12fb8a-ca64-6047-8618-c8884caa6c4a",
+        "note": "the property length differs per partition (16 B for STMM, 32 B for FLASH, 224 B for ESPI). Whether the longer ones are arrays of service UUIDs is not established; the field is recorded as measured, with the first UUID decoded both ways."
+      }
+    },
+    "FLASH": {
+      "body_offset": 688,
+      "package": {
+        "version": 2,
+        "manifest": [
+          4096,
+          1477
+        ],
+        "image": [
+          8192,
+          172728
+        ]
+      },
+      "image_ends_at_body_end": true,
+      "partition": {
+        "compatible": "arm,ffa-manifest-1.0",
+        "description": "Flash Service",
+        "ffa-version": 65538,
+        "uuid": [
+          1018920392,
+          4165516359,
+          573283749,
+          2523044502,
+          3363683132,
+          1203521784,
+          2778540834,
+          2526700182
+        ],
+        "id": 32770,
+        "execution-ctx-count": 1,
+        "exception-level": 2,
+        "execution-state": 0,
+        "load-address": 2474901504,
+        "entrypoint-offset": 8192,
+        "xlat-granule": 0,
+        "messaging-method": 3,
+        "ns-interrupts-action": 0,
+        "notification-support": "",
+        "gp-register-num": 0,
+        "boot-order": 1
+      },
+      "regions": [
+        {
+          "node": "//boot-info",
+          "compatible": "arm,ffa-manifest-boot-info",
+          "ffa_manifest": "",
+          "measured": {
+            "compatible": [
+              404,
+              27
+            ],
+            "ffa_manifest": [
+              444,
+              0
+            ]
+          }
+        },
+        {
+          "node": "//memory-regions",
+          "compatible": "arm,ffa-manifest-memory-regions",
+          "measured": {
+            "compatible": [
+              480,
+              32
+            ]
+          }
+        },
+        {
+          "node": "//memory-regions/osroot-shared",
+          "description": "osroot-shared-buffer",
+          "pages-count": 2,
+          "base-address": 2499813376,
+          "attributes": 3,
+          "measured": {
+            "description": [
+              544,
+              21
+            ],
+            "pages-count": [
+              580,
+              4
+            ],
+            "base-address": [
+              596,
+              8
+            ],
+            "attributes": [
+              616,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//device-regions",
+          "compatible": "arm,ffa-manifest-device-regions",
+          "measured": {
+            "compatible": [
+              660,
+              32
+            ]
+          }
+        },
+        {
+          "node": "//device-regions/qspi-reg",
+          "description": "qspi-map-regs",
+          "base-address": 369623040,
+          "pages-count": 1,
+          "attributes": 3,
+          "interrupts": 2087622544128,
+          "smmu-id": 0,
+          "stream-ids": 180,
+          "measured": {
+            "description": [
+              720,
+              14
+            ],
+            "base-address": [
+              748,
+              8
+            ],
+            "pages-count": [
+              768,
+              4
+            ],
+            "attributes": [
+              784,
+              4
+            ],
+            "interrupts": [
+              800,
+              8
+            ],
+            "smmu-id": [
+              820,
+              4
+            ],
+            "stream-ids": [
+              836,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//device-regions/qspi-mmio",
+          "description": "qspi-map-mmio",
+          "pages-count": 32768,
+          "base-address": 1342177280,
+          "attributes": 1,
+          "measured": {
+            "description": [
+              872,
+              14
+            ],
+            "pages-count": [
+              900,
+              4
+            ],
+            "base-address": [
+              916,
+              8
+            ],
+            "attributes": [
+              936,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//device-regions/ipic-reg",
+          "description": "ipic-map-regs",
+          "base-address": 342360064,
+          "pages-count": 117,
+          "attributes": 3,
+          "interrupts": 2426656524544,
+          "measured": {
+            "description": [
+              972,
+              14
+            ],
+            "base-address": [
+              1000,
+              8
+            ],
+            "pages-count": [
+              1020,
+              4
+            ],
+            "attributes": [
+              1036,
+              4
+            ],
+            "interrupts": [
+              1052,
+              8
+            ]
+          }
+        },
+        {
+          "node": "//device-regions/gpio-cfg",
+          "description": "gpio-cfg-regs",
+          "base-address": 268619776,
+          "pages-count": 1,
+          "attributes": 3,
+          "measured": {
+            "description": [
+              1092,
+              14
+            ],
+            "base-address": [
+              1120,
+              8
+            ],
+            "pages-count": [
+              1140,
+              4
+            ],
+            "attributes": [
+              1156,
+              4
+            ]
+          }
+        }
+      ],
+      "inspection_status": "complete: header and manifest decoded; image not interpreted",
+      "decoded_evidence": {
+        "package_fields": "tools/spkg.package",
+        "manifest_fields": "tools/spkg.manifest"
+      },
+      "uuid_measured": {
+        "length": 32,
+        "first_uuid_be": "3cbb7dc8-f848-bc47-222b-9da596629a96",
+        "first_uuid_le": "c87dbb3c-48f8-47bc-222b-9da596629a96",
+        "note": "the property length differs per partition (16 B for STMM, 32 B for FLASH, 224 B for ESPI). Whether the longer ones are arrays of service UUIDs is not established; the field is recorded as measured, with the first UUID decoded both ways."
+      }
+    },
+    "ESPI": {
+      "body_offset": 688,
+      "package": {
+        "version": 2,
+        "manifest": [
+          4096,
+          2093
+        ],
+        "image": [
+          8192,
+          266488
+        ]
+      },
+      "image_ends_at_body_end": true,
+      "partition": {
+        "compatible": "arm,ffa-manifest-1.0",
+        "description": "eSPI Service",
+        "ffa-version": 65538,
+        "uuid": [
+          3489130403,
+          3108227686,
+          1201237659,
+          296084152,
+          2746421429,
+          1413543513,
+          788495034,
+          1707600561,
+          1930562611,
+          1464329725,
+          1700469144,
+          41222969,
+          3752679281,
+          1665973807,
+          2901382574,
+          481354518,
+          122866469,
+          2101491372,
+          2805657514,
+          2127722376,
+          2809001265,
+          1917664345,
+          3348083620,
+          1941969431,
+          206804854,
+          3243145680,
+          231720100,
+          4203994155,
+          1350518373,
+          1330544514,
+          4108021895,
+          1166014403,
+          2575963875,
+          726292298,
+          3155254924,
+          104122366,
+          2087507467,
+          2789771426,
+          551733423,
+          1659568908,
+          2043167852,
+          3544300752,
+          1130428094,
+          3873407521,
+          3982748195,
+          3930493877,
+          612968368,
+          803834079,
+          2690861704,
+          541164850,
+          3236866691,
+          1185259528,
+          2152575096,
+          2252938706,
+          2068237194,
+          3313116256
+        ],
+        "id": 32771,
+        "execution-ctx-count": 1,
+        "exception-level": 2,
+        "execution-state": 0,
+        "load-address": 2475950080,
+        "entrypoint-offset": 8192,
+        "xlat-granule": 0,
+        "messaging-method": 1539,
+        "ns-interrupts-action": 0,
+        "notification-support": "",
+        "gp-register-num": 0,
+        "boot-order": 0
+      },
+      "regions": [
+        {
+          "node": "//boot-info",
+          "compatible": "arm,ffa-manifest-boot-info",
+          "ffa_manifest": "",
+          "measured": {
+            "compatible": [
+              596,
+              27
+            ],
+            "ffa_manifest": [
+              636,
+              0
+            ]
+          }
+        },
+        {
+          "node": "//memory-regions",
+          "compatible": "arm,ffa-manifest-memory-regions",
+          "measured": {
+            "compatible": [
+              672,
+              32
+            ]
+          }
+        },
+        {
+          "node": "//memory-regions/ns_shm0",
+          "description": "ns-comm-for-generic-emi-feature",
+          "pages-count": 1,
+          "base-address": 2470301696,
+          "attributes": 11,
+          "measured": {
+            "description": [
+              728,
+              32
+            ],
+            "pages-count": [
+              772,
+              4
+            ],
+            "base-address": [
+              788,
+              8
+            ],
+            "attributes": [
+              808,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//memory-regions/ns_pd0_shm",
+          "description": "ns-comm-for-ucsi-pd0-feature",
+          "pages-count": 1,
+          "base-address": 2470305792,
+          "attributes": 11,
+          "measured": {
+            "description": [
+              844,
+              29
+            ],
+            "pages-count": [
+              888,
+              4
+            ],
+            "base-address": [
+              904,
+              8
+            ],
+            "attributes": [
+              924,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//memory-regions/ns_pd1_shm",
+          "description": "ns-comm-for-ucsi-pd1-feature",
+          "pages-count": 1,
+          "base-address": 2470309888,
+          "attributes": 11,
+          "measured": {
+            "description": [
+              960,
+              29
+            ],
+            "pages-count": [
+              1004,
+              4
+            ],
+            "base-address": [
+              1020,
+              8
+            ],
+            "attributes": [
+              1040,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//device-regions",
+          "compatible": "arm,ffa-manifest-device-regions",
+          "measured": {
+            "compatible": [
+              1084,
+              32
+            ]
+          }
+        },
+        {
+          "node": "//device-regions/espi_controller",
+          "description": "espi controller",
+          "pages-count": 1,
+          "base-address": 369426432,
+          "attributes": 3,
+          "interrupts": [
+            606,
+            2304,
+            487,
+            268438272
+          ],
+          "smmu-id": 0,
+          "stream-ids": 181,
+          "measured": {
+            "description": [
+              1148,
+              16
+            ],
+            "pages-count": [
+              1176,
+              4
+            ],
+            "base-address": [
+              1192,
+              8
+            ],
+            "attributes": [
+              1212,
+              4
+            ],
+            "interrupts": [
+              1228,
+              16
+            ],
+            "smmu-id": [
+              1256,
+              4
+            ],
+            "stream-ids": [
+              1272,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//device-regions/ccu_related",
+          "description": "ccu mbx/int",
+          "base-address": 1007222784,
+          "pages-count": 1,
+          "attributes": 3,
+          "interrupts": 2293512538368,
+          "measured": {
+            "description": [
+              1308,
+              12
+            ],
+            "base-address": [
+              1332,
+              8
+            ],
+            "pages-count": [
+              1352,
+              4
+            ],
+            "attributes": [
+              1368,
+              4
+            ],
+            "interrupts": [
+              1384,
+              8
+            ]
+          }
+        },
+        {
+          "node": "//device-regions/sramrom",
+          "description": "sramrom",
+          "base-address": 1249280,
+          "pages-count": 2,
+          "attributes": 3,
+          "measured": {
+            "description": [
+              1420,
+              8
+            ],
+            "base-address": [
+              1440,
+              8
+            ],
+            "pages-count": [
+              1460,
+              4
+            ],
+            "attributes": [
+              1476,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//device-regions/eint",
+          "description": "eint",
+          "base-address": 306249728,
+          "pages-count": 1,
+          "attributes": 3,
+          "measured": {
+            "description": [
+              1508,
+              5
+            ],
+            "base-address": [
+              1528,
+              8
+            ],
+            "pages-count": [
+              1548,
+              4
+            ],
+            "attributes": [
+              1564,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//device-regions/spbm_PL_related",
+          "description": "spbm_PL_related",
+          "base-address": 472088576,
+          "pages-count": 1,
+          "attributes": 3,
+          "measured": {
+            "description": [
+              1604,
+              16
+            ],
+            "base-address": [
+              1632,
+              8
+            ],
+            "pages-count": [
+              1652,
+              4
+            ],
+            "attributes": [
+              1668,
+              4
+            ]
+          }
+        },
+        {
+          "node": "//device-regions/spbm_CPU_temp",
+          "description": "spbm_CPU_temp",
+          "base-address": 87662592,
+          "pages-count": 1,
+          "attributes": 3,
+          "measured": {
+            "description": [
+              1708,
+              14
+            ],
+            "base-address": [
+              1736,
+              8
+            ],
+            "pages-count": [
+              1756,
+              4
+            ],
+            "attributes": [
+              1772,
+              4
+            ]
+          }
+        }
+      ],
+      "inspection_status": "complete: header and manifest decoded; image not interpreted",
+      "decoded_evidence": {
+        "package_fields": "tools/spkg.package",
+        "manifest_fields": "tools/spkg.manifest"
+      },
+      "uuid_measured": {
+        "length": 224,
+        "first_uuid_be": "cff7e7a3-b943-ca66-4799-6e9b11a5e2b8",
+        "first_uuid_le": "a3e7f7cf-43b9-66ca-4799-6e9b11a5e2b8",
+        "note": "the property length differs per partition (16 B for STMM, 32 B for FLASH, 224 B for ESPI). Whether the longer ones are arrays of service UUIDs is not established; the field is recorded as measured, with the first UUID decoded both ways."
+      }
+    }
+  },
+  "scope": "what is decoded: the SPKG header (version, manifest and image extents) and the manifest's own properties and regions. What is not: the partition image, the service's message format, and any field whose semantics are not stated by the manifest. A partition id and a label do not establish the flash service's transaction contract.",
+  "uuid_reading": "FF-A manifests state a partition uuid; the byte order the firmware uses for matching is not established here, so both decodings are recorded rather than one chosen.",
+  "decoding": "address cells are decoded as integers: 0x50000000 is `P` only if read as text, and the manifest means the address. Text is decoded only for compatible/description/name/dev-name."
+}
