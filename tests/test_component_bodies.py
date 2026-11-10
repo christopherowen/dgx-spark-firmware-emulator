@@ -26,8 +26,12 @@ class ComponentBodyTests(unittest.TestCase):
         self.record = json.loads(RECORD.read_text())
 
     def test_the_record_says_what_it_found_and_what_it_did_not(self):
-        self.assertIn("finding", self.record)
-        self.assertIn("empty after the root node", self.record["not_a_finding"])
+        """Documentation lint: the superseded empty-manifest claim stays explicitly retracted."""
+        claim = self.record["invalidated_findings"]["empty_manifest"]
+        self.assertEqual(claim["status"], "retracted")
+        self.assertEqual(claim["replacement_record"], "research/spkg-manifest.json")
+        self.assertTrue(self.record["finding"])
+        self.assertTrue(self.record["not_a_finding"])
 
     def test_the_wrapped_components_name_themselves_at_the_body(self):
         kinds = {name: entry["kind"] for name, entry in self.record["components"].items()}

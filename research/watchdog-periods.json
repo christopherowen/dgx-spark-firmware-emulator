@@ -1,5 +1,6 @@
 {
   "source": {
+    "coordinate_system": "slot_image",
     "artifact": "the 2.158.15 capsule (components BL31, BL32) and the emulated boot's own trace",
     "coordinate_space": "slot image; BL31/BL32 ranges are the map's offsets relative to the declared header (0x203000)",
     "note": "BL31 and BL32 are present and high-entropy; the period is not read out of them, which is the record's finding",

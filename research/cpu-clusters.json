@@ -1,5 +1,7 @@
 {
   "source": {
+    "access": "read_only",
+    "interface": "sysfs",
     "how": "read-only sysfs on three units running BIOS 5.36_0ACUM027: /sys/devices/system/cpu/cpufreq/policy*/cpuinfo_max_freq, cpufreq driver and governor",
     "firmware": "5.36_0ACUM027 (three units, identical counts)",
     "note": "no workload was run; these are the advertised maxima and the driver's identity"

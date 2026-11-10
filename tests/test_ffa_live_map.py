@@ -38,8 +38,14 @@ class LiveMapTests(unittest.TestCase):
         self.assertIn("884a63a0-3285-4120-83aa-eec008a0a546", self.record["partitions"]["0x8003"])
 
     def test_the_flash_uuid_property_is_two_uuids(self):
-        entry = self.record["identifications"]["0x8002 / 3cbb7dc8-f848-bc47-222b-9da596629a96 and c87dbb3c-47bc-48f8-a59d-2b22969a6296"]
-        self.assertIn("two", entry)
+        """Decode the recorded FLASH manifest cells and match both UUIDs to the live inventory."""
+        manifest_record = json.loads((ROOT / "research" / "spkg-manifest.json").read_text())
+        cells = manifest_record["components"]["FLASH"]["partition"]["uuid"]
+        self.assertEqual(len(cells), 8, "two UUIDs require eight 32-bit cells")
+        raw = struct.pack(">8I", *cells)
+        uuids = {as_uuid(raw[offset:offset + 16]) for offset in (0, 16)}
+        self.assertEqual(len(uuids), 2)
+        self.assertEqual(uuids, set(self.record["partitions"]["0x8002"]))
 
     @unittest.skipUnless(CAPSULE.is_file(), "the prepared capsule is not present")
     def test_the_manifest_uuids_appear_in_the_live_map(self):

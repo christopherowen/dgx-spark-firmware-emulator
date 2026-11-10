@@ -41,8 +41,12 @@ class EspiRegisterTests(unittest.TestCase):
         self.record = json.loads(RECORD.read_text())
 
     def test_the_record_says_what_it_does_not_claim(self):
-        self.assertIn("NOT established", self.record["reachability"])
-        self.assertIn("not_claimed", self.record)
+        """Documentation lint: a static register map does not establish normal-world permission."""
+        self.assertEqual(self.record["verification"],
+                         {"normal_world_read": "not_established",
+                          "normal_world_write": "not_established",
+                          "frequency_change": "not_established"})
+        self.assertTrue(self.record["not_claimed"])
 
     def test_the_power_limit_block_is_part_of_the_map(self):
         for register in self.record["power_limit_block"]["registers"]:

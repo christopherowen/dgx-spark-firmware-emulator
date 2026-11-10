@@ -25,6 +25,28 @@ QEMU build, emulator integration tests are skipped:
 python3 -m unittest discover -s tests -v
 ```
 
+The fan allowlist and Boot Services guards also run on the host: the fan fixture
+replaces only the privileged SMC transport, while the device-path and filesystem
+fixtures call the real EFI entry points with synthetic tables, neighbouring-slot
+canaries, and valid/invalid signatures. These checks do not prove a firmware boot.
+The research-record documentation lints validate structured claim status, hashes,
+coordinate-system enums, access modes and table identifiers, not English wording
+or the truth of claims that require unavailable hardware.
+
+Run the targeted oracle-sensitivity gate to confirm every converted test rejects
+its source/data mutant (including writes enabled in `READ_ONLY` and bypassed
+Boot Services signature checks):
+
+```sh
+python3 tools/check_test_oracles.py --output build/oracle-mutations.json
+```
+
+The gate first requires each unmodified test to pass. Compile errors, crashes and
+skips do not count as killed mutants. Research prose remains human-reviewed;
+the provenance lint checks recorded non-erased payload bytes, not arbitrary
+sentences in documentation. Firmware-dependent tests still replay the records
+against their named artifacts when those artifacts are available.
+
 After building the [QEMU profile](../qemu/README.md), include its peripheral,
 NIC, monitor and TRNG integration tests:
 

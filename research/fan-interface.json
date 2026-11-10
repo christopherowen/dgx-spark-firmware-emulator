@@ -1,5 +1,6 @@
 {
   "source": {
+    "table_id": "DSDT",
     "table": "DSDT, captured from the emulated profile (vendor UEFI 2.158.15)",
     "sha256": "b0c2a9aa95c50b8e93345f89538a53a5973b8fea36a786ad0608b5cbef8697f5",
     "size": 71058,

@@ -34,9 +34,10 @@ class CryptoMetadataTests(unittest.TestCase):
                              f"{field} repeats — that would be a real weakness and this record would say so")
 
     def test_the_record_does_not_claim_a_cipher(self):
-        text = json.dumps(self.record).lower()
-        self.assertIn("inference", text, "the cipher is an inference and must be marked as one")
-        self.assertIn("what_is_not_claimed", self.record)
+        """Documentation lint: metadata shape does not identify a cipher algorithm."""
+        self.assertEqual(self.record["cipher_claim"]["status"], "inferred")
+        self.assertIsNone(self.record["cipher_claim"]["algorithm"])
+        self.assertTrue(self.record["what_is_not_claimed"])
 
     @unittest.skipUnless(CAPSULE.is_file(), "the prepared capsule is not present")
     def test_the_metadata_matches_the_capsule_field_by_field(self):

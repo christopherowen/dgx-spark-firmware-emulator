@@ -1,5 +1,8 @@
 {
   "source": {
+    "access": "read_only",
+    "interface": "sysfs",
+    "firmware": "5.36_0ACUM027",
     "how": "read-only: /sys/bus/arm_ffa/devices on a unit running BIOS 5.36_0ACUM027",
     "kconfig": {
       "CONFIG_ACPI_FFH": "y",

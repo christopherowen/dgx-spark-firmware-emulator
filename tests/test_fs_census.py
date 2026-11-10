@@ -16,6 +16,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from host_probe import host_probe
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "tests" / "fixtures" / "fs_census.c"
 STATE = ROOT / "firmware" / "state" / "board-2158.bin"
@@ -41,9 +43,20 @@ def build(directory: Path) -> Path:
 
 class FileSystemCensusTests(unittest.TestCase):
     def test_the_probe_checks_the_boot_services_signature_first(self):
-        text = SOURCE.read_text()
-        self.assertIn("0x56524553544f4f42", text, "BOOTSERV is checked, not assumed")
-        self.assertIn("0x60", text, "BootServices offset")
+        """Execute the census: a wrong signature must reject all Boot Services entries."""
+        with host_probe(SOURCE, "boot_services_harness.c") as invoke:
+            for state in ("bad-signature", "no-boot"):
+                result = invoke(state)
+                self.assertEqual(result["status"], 1)
+                self.assertEqual([result[key] for key in ("opens", "locates", "releases", "unexpected")],
+                                 [0, 0, 0, 0], "invalid Boot Services must not be called")
+                self.assertEqual(bytes.fromhex(result["output_hex"]), b"FS-FAIL boot services\n")
+            result = invoke("valid")
+            self.assertEqual(result["status"], 0)
+            self.assertEqual([result[key] for key in ("opens", "locates", "releases", "unexpected")],
+                             [4, 1, 1, 0])
+            self.assertEqual(bytes.fromhex(result["output_hex"]),
+                             b"FS-HANDLES 2\nDP 0 8 010104007fff0400\nFS 0 4 7fff0400\nFS-CNT 1\nFS-END\n")
 
     @unittest.skipUnless(os.environ.get("SPARK_QEMU"), "set SPARK_QEMU to run the profile")
     @unittest.skipUnless(STATE.is_file(), "a device image is needed to boot")

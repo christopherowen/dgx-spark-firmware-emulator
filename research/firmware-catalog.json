@@ -1,5 +1,6 @@
 {
   "source": "https://cdn.fwupd.org/downloads/firmware.xml.gz, read 2026-11-09",
+  "checked_on": "2026-11-09",
   "what": "every DGX Spark firmware component the LVFS carries, with the releases it publishes. Each component currently has exactly one, so 'newest available' is a date and a hash rather than a choice among versions.",
   "components": {
     "com.nvidia.dgx.spark.ec.firmware": {
@@ -47,6 +48,9 @@
     },
     "spark-soc-4.1.0.cab": {
       "version": null,
+      "vendor": "Dell",
+      "component": "com.dell.uefic8a8158c",
+      "product": "Pro Max with GB10 FCM1253",
       "note": "the Dell 'Pro Max with GB10 FCM1253' capsule (LVFS com.dell.uefic8a8158c, 4.1.0): same silicon family, different vendor packaging, no 0x version string"
     }
   },

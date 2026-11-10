@@ -1,5 +1,6 @@
 {
   "source": {
+    "table_id": "DSDT",
     "table": "DSDT, captured under the emulator (vendor UEFI 2.158.15)",
     "sha256": "b0c2a9aa95c50b8e93345f89538a53a5973b8fea36a786ad0608b5cbef8697f5",
     "package": "23 elements, NumEntries 23 then Revision 3, then registers"
@@ -83,5 +84,9 @@
   ],
   "how_derived": "evaluated with acpiexec against the captured DSDT and cross-read from the iasl disassembly; the ordering is the specification's revision-3 package order",
   "not_proved": "that cppc_cpufreq binds, or that any value written here changes a frequency: the guest currently reports 'cpufreq none', and the reason has not been isolated",
+  "verification": {
+    "cpufreq_binding": "not_established",
+    "frequency_change": "not_established"
+  },
   "values_are_registers_not_literals": "the 23-element package is an element *map*, not a value list: element 0 is the count (23), element 1 is the revision (3), and the rest are register descriptors (opcode 0x11 Buffer) pointing at where the OS reads performance and frequency values. So the DSDT does not declare a maximum frequency; the value comes from the registers, which is why cpufreq on a unit reports what it reports (2.808 GHz there)."
 }

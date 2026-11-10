@@ -1,5 +1,6 @@
 {
   "source": {
+    "coordinate_system": "component_image",
     "artifact": "the ESPI component of the 2.158.15 capsule's slot image",
     "capsule_sha256": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78",
     "image_sha256": "67b9650baef4a3ad224413d89d08aa743517d7bf69ed85882d1cf33f5c492bcf",
@@ -97,6 +98,11 @@
     ]
   },
   "reachability": "NOT established. The service is reached from normal world only through EL3 (the fan methods' SMC 0xC400008D), and BL31 is among the encrypted components, so whether an arbitrary SPBM register id is accepted from normal world is decided by code we cannot read. The fan ids 0x06000704/706/790-793 do not appear in this image at all.",
+  "verification": {
+    "normal_world_read": "not_established",
+    "normal_world_write": "not_established",
+    "frequency_change": "not_established"
+  },
   "not_claimed": "that these registers are readable or writable from normal world, or that writing them changes clocks. The map says which registers the vendor's own service uses; it says nothing about permission.",
   "register_count": 21,
   "protocol_boundary": "the eSPI image contains no decoder for the SMC word the fan methods use: there is no instruction extracting bits 40..47 anywhere in it, and the fan register ids 0x06000704/706/790-793 never appear. So the SMC word is decoded in EL3, which is encrypted, and whether the gateway accepts an id outside the documented family cannot be answered from this image \u2014 a negative that closes the static route for that question."

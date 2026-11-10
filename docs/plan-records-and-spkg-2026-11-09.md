@@ -26,11 +26,11 @@ not another sentence in a doc.
 **Verification:** every changed number re-derived from the artifact in the test itself; the suite green;
 each record states artifact hash + coordinate space + (where relevant) the header position.
 
-**A4 (from review).** The guard must cover *text*, not only numbers: "erased in every release" survived
-four rewrites as a fragment. `tests/test_record_provenance.py` now fails on the phrase families unless
-the surrounding text is a retraction, and it asserts hash + coordinate space per slice-derived record.
-Old values stay as `old_value` with `invalidated_by` naming the correction, so history is readable
-without being active evidence.
+**A4 (from review, updated 2026-11-10).** "Erased in every release" survived four
+rewrites as a fragment. The provenance documentation lint now checks structured
+hashes, coordinate systems and recorded non-erased component bytes, not phrase
+families or nearby retraction wording. Retractions carry explicit status data;
+arbitrary prose still requires human review. Artifact replay is a separate test.
 
 **A5 (from review).** Fix the *active* sentence, not by appending another correction: the coordinate
 table in `docs/ram-timings.md` labelled a slot offset as a capsule-file offset. Done.

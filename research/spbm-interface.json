@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "source": {
+    "table_id": "DSDT",
     "table": "DSDT, captured under the emulator (vendor UEFI 2.158.15), decompiled with iasl",
     "sha256": "b0c2a9aa95c50b8e93345f89538a53a5973b8fea36a786ad0608b5cbef8697f5",
     "coordinate_space": "not applicable: these are ACPI register offsets inside \\_SB.MTEL (0x05170000), not offsets into a capsule or part image",

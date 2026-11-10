@@ -48,26 +48,7 @@ static void put_hex(u64 value)
         putc(digits[(value >> shift) & 0xf]);
 }
 
-/* One SMC round trip; returns 0 when the service answered with the completion id. */
-static u64 call(u64 *frame)
-{
-    /* The registers are loaded and stored explicitly: binding five named register variables with
-     * "+r" lets the compiler spill them, and an SMC that runs with a spilled x0 is an SMC with the
-     * wrong function id. */
-    __asm__ volatile("ldp x0, x1, [%0]\n"
-                     "ldp x2, x3, [%0, #16]\n"
-                     "ldr x4, [%0, #32]\n"
-                     "smc #0\n"
-                     "stp x0, x1, [%0]\n"
-                     "str x4, [%0, #32]\n"
-                     :
-                     : "r"(frame)
-                     : "x0", "x1", "x2", "x3", "x4",
-                       "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
-                       "x16", "x17",   /* the monitor clears these; x16/x17 are the linker's */
-                       "memory");
-    return frame[0];
-}
+#include "fan_smc.h"
 
 /* The allowlist, in one place. A build with READ_ONLY defined carries the two status reads and
  * nothing else: it is the conformance packet, and it cannot write even if a caller asks it to. */

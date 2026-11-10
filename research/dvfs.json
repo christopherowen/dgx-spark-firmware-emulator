@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "source": {
+    "coordinate_system": "slot_image",
     "artifact": "the 2.158.15 capsule's slot image",
     "capsule_sha256": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78",
     "slot_sha256": "f89f6092341c410d9ae2103e7c0ca991c040393373bb3c0798e64ec7fca484cc",

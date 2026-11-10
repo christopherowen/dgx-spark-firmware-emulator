@@ -62,8 +62,10 @@ class CppcMapTests(unittest.TestCase):
             self.assertTrue(self.entries[field].startswith("FFixedHW"), self.entries[field])
 
     def test_the_record_says_what_it_does_not_prove(self):
-        self.assertIn("not_proved", self.record)
-        self.assertIn("cpufreq", self.record["not_proved"])
+        """Documentation lint: the element map does not establish a bound driver or clock changes."""
+        self.assertEqual(self.record["verification"],
+                         {"cpufreq_binding": "not_established", "frequency_change": "not_established"})
+        self.assertTrue(self.record["not_proved"])
 
     @unittest.skipUnless(DECOMPILED, "no decompiled DSDT here; set SPARK_DSDT to cross-check")
     def test_the_addresses_come_from_the_table(self):

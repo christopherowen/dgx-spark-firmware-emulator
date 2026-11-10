@@ -20,6 +20,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from host_probe import host_probe
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "tests" / "fixtures" / "dp_self.c"
 STATE = ROOT / "firmware" / "state" / "board-2158.bin"
@@ -45,10 +47,19 @@ def build(directory: Path) -> Path:
 
 class DevicePathSourceTests(unittest.TestCase):
     def test_the_probe_states_the_two_offsets_it_depends_on(self):
-        text = SOURCE.read_text()
-        self.assertIn("0x60", text, "BootServices offset")
-        self.assertIn("0x58", text, "RuntimeServices offset")
-        self.assertIn("0x56524553544f4f42", text, "the BOOTSERV signature is checked, not assumed")
+        """Execute the entry point: reject invalid tables before any Boot Services call."""
+        with host_probe(SOURCE, "boot_services_harness.c", ("DEVICE_PATH",)) as invoke:
+            for state in ("bad-signature", "no-boot"):
+                result = invoke(state)
+                self.assertEqual(result["status"], 1)
+                self.assertEqual([result[key] for key in ("opens", "locates", "releases", "unexpected")],
+                                 [0, 0, 0, 0], "invalid Boot Services must not be called")
+                self.assertEqual(bytes.fromhex(result["output_hex"]), b"SELF-FAIL boot services\n")
+            result = invoke("valid")
+            self.assertEqual(result["status"], 0)
+            self.assertEqual([result[key] for key in ("opens", "locates", "releases", "unexpected")],
+                             [1, 0, 0, 0], "HandleProtocol must use the real Boot Services slot")
+            self.assertEqual(bytes.fromhex(result["output_hex"]), b"SELF 4 7fff0400\nSELF-END\n")
 
     @unittest.skipUnless(os.environ.get("SPARK_QEMU"), "set SPARK_QEMU to run the profile")
     @unittest.skipUnless(STATE.is_file(), "a device image is needed to boot")

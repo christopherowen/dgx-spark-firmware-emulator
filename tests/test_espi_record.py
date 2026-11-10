@@ -26,8 +26,11 @@ class EspiRecordTests(unittest.TestCase):
         self.record = json.loads(RECORD.read_text())
 
     def test_the_record_answers_one_question_and_says_whether_it_can(self):
+        """Documentation lint: classify the open eSPI model question without parsing its wording."""
         self.assertEqual(self.record["schema"], 1)
-        self.assertIn("espi", self.record["question"].lower())
+        self.assertEqual(self.record["subject"], "espi")
+        self.assertEqual(self.record["model_status"], "unmodelled")
+        self.assertTrue(self.record["question"])
         self.assertIs(self.record["established"], False)
         self.assertTrue(self.record["status"])
 
@@ -40,8 +43,12 @@ class EspiRecordTests(unittest.TestCase):
             self.assertRegex(entry["sha256"], r"^[0-9a-f]{64}$")
 
     def test_the_reason_it_is_not_modelled_names_the_missing_prerequisite(self):
-        reasons = " ".join(self.record["why_not_modelled"]).lower()
-        self.assertIn("unextracted", reasons)
+        """Documentation lint: record the missing execution and transaction-contract prerequisites."""
+        self.assertEqual(set(self.record["model_blockers"]),
+                         {"service_not_booted", "transaction_contract_uncharacterised"})
+        self.assertEqual(set(self.record["closure_requirements"]),
+                         {"boot_service", "characterise_transactions"})
+        self.assertTrue(self.record["why_not_modelled"])
         self.assertTrue(self.record["what_would_close_it"])
 
     def test_the_searches_still_hold_where_the_artifacts_exist(self):

@@ -7,6 +7,7 @@ test keeps the record tied to the artifacts: the local cab's own version string 
 ones the record names.
 """
 
+from datetime import date
 import hashlib
 import json
 import re
@@ -33,9 +34,13 @@ class FirmwareCatalogTests(unittest.TestCase):
                              f"{identifier} publishes exactly one release")
 
     def test_the_answer_is_stated_with_a_date(self):
-        answer = self.record["answer"]
-        self.assertIn("0x2009e0f", answer)
-        self.assertIn("2026-09-28", answer)
+        """Documentation lint: validate dated release data, not an online freshness claim."""
+        release = self.record["components"]["com.nvidia.dgx.spark.socfw.firmware"]["releases"][0]
+        self.assertEqual(release["version"], "0x2009e0f")
+        self.assertEqual(release["date"], "2026-09-28")
+        self.assertLessEqual(date.fromisoformat(release["date"]),
+                             date.fromisoformat(self.record["checked_on"]))
+        self.assertTrue(self.record["answer"])
 
     def test_the_newest_capsule_is_the_one_this_repository_holds(self):
         newest = self.record["components"]["com.nvidia.dgx.spark.socfw.firmware"]["releases"][0]
@@ -50,9 +55,13 @@ class FirmwareCatalogTests(unittest.TestCase):
                       "the capsule carries its own version string")
 
     def test_the_dell_capsule_is_recorded_as_a_different_product(self):
+        """Documentation lint: a different vendor/component must not become a DGX Spark release."""
         dell = self.record["local"]["spark-soc-4.1.0.cab"]
         self.assertIsNone(dell["version"])
-        self.assertIn("Dell", dell["note"])
+        self.assertEqual(dell["vendor"], "Dell")
+        self.assertEqual(dell["component"], "com.dell.uefic8a8158c")
+        self.assertEqual(dell["product"], "Pro Max with GB10 FCM1253")
+        self.assertNotIn(dell["component"], self.record["components"])
 
 
 if __name__ == "__main__":

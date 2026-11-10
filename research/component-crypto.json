@@ -1,5 +1,6 @@
 {
   "source": {
+    "coordinate_system": "slot_image",
     "artifact": "the 2.158.15 capsule's slot image",
     "sha256": "00393be197569851c9a72bd214cf22f45a04b7e1fc759ab4ccc68c98dd650d78",
     "coordinate_space": "slot image; the metadata block is the 0xd0-byte sub-image header at the offset the descriptor chain gives"
@@ -14,6 +15,10 @@
     "at_0xb0": "32 bytes, unique per component"
   },
   "reading": "a 12-byte nonce and a 16-byte tag beside an 'AAD' label is the shape of an AEAD construction (AES-GCM uses a 12-byte IV and a 16-byte tag). [INFERENCE] on the cipher: the artifacts name no algorithm and no key id.",
+  "cipher_claim": {
+    "status": "inferred",
+    "algorithm": null
+  },
   "why_this_closes_the_offline_route": [
     "all 15 metadata blocks carry distinct nonces, so there is no keystream or counter reuse to exploit",
     "the payloads are authenticated, so a modified or truncated image is detectable \u2014 no oracle",

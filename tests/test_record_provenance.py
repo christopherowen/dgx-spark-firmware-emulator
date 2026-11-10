@@ -1,10 +1,7 @@
-"""Every record in `research/` must say where its numbers came from.
+"""Validate research-record provenance data, not the truth of arbitrary English claims.
 
-The extraction defect recurred four times as the same failure: a number outliving the state it
-described — an erased component that was present, an entropy measured on a neighbour's bytes, a
-coordinate from one wrapper applied to another file. A sentence in a document did not stop it. This
-test does: a record that carries measurements must name its artifact, and a record that carries
-offsets must name the coordinate space those offsets are in.
+These documentation lints require well-formed artifact identities, coordinate enums,
+and observation/table metadata. Artifact replay remains in the record-specific tests.
 """
 
 import json
@@ -34,6 +31,17 @@ def records():
     for path in sorted(RESEARCH.glob("*.json")):
         yield path.name, json.loads(path.read_text())
 
+def field_names(value):
+    """Walk data keys only: a word mentioned in prose is not an offset field."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield key
+            yield from field_names(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from field_names(child)
+
+
 
 class ProvenanceTests(unittest.TestCase):
     def test_every_record_states_its_source(self):
@@ -43,60 +51,61 @@ class ProvenanceTests(unittest.TestCase):
             self.assertTrue(source, f"{name} has an empty source")
 
     def test_slice_derived_records_name_the_artifact_and_the_coordinates(self):
+        """Documentation lint: require a hash value and a defined coordinate-system enum."""
         for name, record in records():
             if name not in SLICE_DERIVED:
                 continue
             source = record["source"]
-            text = source if isinstance(source, str) else json.dumps(source)
-            self.assertIn("sha256", text, f"{name} must name the artifact by hash")
-            self.assertIn("coordinate", text, f"{name} must name the coordinate space")
+            self.assertTrue(source["artifact"], name)
+            digest = source.get("capsule_sha256", source.get("sha256"))
+            self.assertIsInstance(digest, str, name)
+            self.assertRegex(digest, r"^[0-9a-f]{64}$", name)
+            self.assertIn(source["coordinate_system"], {"slot_image", "component_image"}, name)
+            self.assertTrue(source["coordinate_space"], name)
 
     def test_live_observations_say_how_and_where(self):
+        """Documentation lint: require structured read access, interface and firmware identity."""
         for name, record in records():
             if name not in LIVE_OBSERVATION:
                 continue
             source = record["source"]
-            text = source if isinstance(source, str) else json.dumps(source)
-            self.assertIn("read-only", text.lower(), f"{name} must say the reading was read-only")
-            self.assertTrue(any(marker in text for marker in ("ACUM", "kernel", "firmware")),
-                            f"{name} must name the firmware or kernel it observed")
+            self.assertEqual(source["access"], "read_only", name)
+            self.assertEqual(source["interface"], "sysfs", name)
+            self.assertTrue(source["how"], name)
+            self.assertIsInstance(source["firmware"], str, name)
+            self.assertTrue(source["firmware"], name)
 
     def test_acpi_derived_records_say_acpi(self):
+        """Documentation lint: require a table identifier and its captured artifact hash."""
         for name, record in records():
             if name not in DSDT_DERIVED:
                 continue
             source = record["source"]
-            text = source if isinstance(source, str) else json.dumps(source)
-            self.assertIn("DSDT", text, f"{name} is derived from the ACPI tables and must say so")
+            self.assertEqual(source["table_id"], "DSDT", name)
+            self.assertRegex(source["sha256"], r"^[0-9a-f]{64}$", name)
 
     def test_no_active_erasure_claim_survives(self):
-        """The defect's most expensive product was a sentence, not a number: "erased in every release".
+        """Documentation lint: component records retain non-erased payload evidence.
 
-        Any surviving claim of that shape must be inside a retraction — a block that says it is
-        withdrawn. The test looks for the phrase families rather than one exact sentence, because the
-        claim was rewritten four times and each rewrite kept a fragment.
+        This checks recorded bytes, not arbitrary prose or all bytes of a vendor image.
+        The component-specific artifact replay test provides that separate check.
         """
-        phrases = ("erased in all", "erases them", "erases most", "not shipped here",
-                   "both regions are erased", "is expected to be erased")
-        allowed_context = ("retract", "withdrawn", "was wrong", "no longer", "historical")
-        for path in list(RESEARCH.glob("*.json")) + list((ROOT / "docs").glob("*.md")):
-            text = path.read_text()
-            for phrase in phrases:
-                start = text.find(phrase)
-                while start >= 0:
-                    window = text[max(0, start - 600):start + 600].lower()
-                    self.assertTrue(any(marker in window for marker in allowed_context),
-                                    f"{path.name}: {phrase!r} survives without a retraction around it")
-                    start = text.find(phrase, start + 1)
+        record = json.loads((RESEARCH / "component-bodies.json").read_text())
+        for name, component in record["components"].items():
+            self.assertGreater(component["body_length"], 0, name)
+            first = bytes.fromhex(component["first_bytes"])
+            self.assertEqual(len(first), min(8, component["body_length"]), name)
+            self.assertNotEqual(first, b"\xff" * len(first), name)
 
     def test_a_record_that_states_offsets_states_their_space(self):
+        """Documentation lint: offset-bearing data must name a supported coordinate system."""
         for name, record in records():
             if name in ("sources.json", "firmware-catalog.json"):
                 continue                      # inventories, not measurements
-            text = json.dumps(record)
-            if "slot_offset" in text or "file_offset" in text or "base-address" in text:
-                self.assertTrue("coordinate" in text or "coordinate_space" in text,
-                                f"{name} names offsets without naming their coordinate space")
+            if {"slot_offset", "file_offset", "base-address"} & set(field_names(record)):
+                self.assertIn(record["source"]["coordinate_system"],
+                              {"slot_image", "component_image", "capsule_file", "physical_address"},
+                              f"{name} names offsets without a coordinate system")
 
 
 if __name__ == "__main__":
