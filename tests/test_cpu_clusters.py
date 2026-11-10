@@ -39,6 +39,23 @@ class CpuClusterTests(unittest.TestCase):
         self.assertTrue(self.record["not_established"])
         self.assertIn("placement", self.record["what_it_means"])
 
+    def test_boost_headroom_explains_every_policy_that_did_not_move(self):
+        """A policy with no CPPC headroom cannot move, and the record must show that it has none.
+
+        This is the difference between "boost did nothing there" and "the firmware advertises nothing
+        to expose": the first is a measurement without an explanation, the second is one with.
+        """
+        head = self.record["boost_measured"]["why_only_half"]["measured_on_a_unit"]
+        moved = self.record["boost_measured"]["effect"]
+        for policy, values in head.items():
+            self.assertEqual(values["max_perf"] - values["nominal_khz"], values["headroom"],
+                             f"{policy}: headroom must be the difference it claims")
+        self.assertEqual(head["policy0"]["headroom"], 0)
+        self.assertEqual(head["policy5"]["headroom"], 0)
+        self.assertGreater(head["policy10"]["headroom"], 0)
+        self.assertEqual(head["policy19"]["headroom"],
+                         moved["cpu_19"]["boost_khz"] - moved["cpu_19"]["before_khz"])
+
     def test_boost_is_recorded_as_a_measured_clock_and_an_unmeasured_workload(self):
         """The boost experiment moved clocks; it did not measure throughput.
 

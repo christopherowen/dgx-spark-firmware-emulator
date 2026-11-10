@@ -75,6 +75,37 @@
     },
     "gain": "1.9-2.7% on ten of the twenty CPUs; zero on the other ten",
     "it_is_usable": "policy 15's scaling_max_freq followed to the new ceiling and scaling_cur_freq read 3978000, so the cores run at the raised clock while boost is on",
-    "reversible": "writing 0 restored every ceiling exactly (policy 10-14 to 2808000, 15-19 to 3900000)"
+    "reversible": "writing 0 restored every ceiling exactly (policy 10-14 to 2808000, 15-19 to 3900000)",
+    "why_only_half": {
+      "mechanism": "cppc_cpufreq offers boost per policy only where the firmware's CPPC highest_perf exceeds nominal_perf, so a policy with no headroom has nothing to expose (LKML, 'cpufreq: cppc: Enable boost by default when supported', which enables boost when caps.highest_perf > caps.nominal_perf)",
+      "measured_on_a_unit": {
+        "policy0": {
+          "max_perf": 2808000,
+          "nominal_khz": 2808000,
+          "headroom": 0
+        },
+        "policy5": {
+          "max_perf": 3900000,
+          "nominal_khz": 3900000,
+          "headroom": 0
+        },
+        "policy10": {
+          "max_perf": 2860000,
+          "nominal_khz": 2808000,
+          "headroom": 52000
+        },
+        "policy15": {
+          "max_perf": 3978000,
+          "nominal_khz": 3900000,
+          "headroom": 78000
+        },
+        "policy19": {
+          "max_perf": 4004000,
+          "nominal_khz": 3900000,
+          "headroom": 104000
+        }
+      },
+      "how": "`max_perf` and `cpuinfo_max_freq` read from each policy's sysfs; equal headroom explains every policy that did not move, and the three with headroom are exactly the groups that did"
+    }
   }
 }
