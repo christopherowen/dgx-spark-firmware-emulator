@@ -157,13 +157,38 @@ def apply_board_preset(args):
         args.erase_us = 40000
 
 
+def nvme_arguments(images, path_for=local_path):
+    """The QEMU arguments for the NVMe namespaces, and one receipt entry per namespace.
+
+    Each image is its own PCI function on bus 1 (slot 2, then 3, …) and is snapshotted, so a run can
+    never write the caller's file. Two namespaces are what installing the recovery system needs: the
+    media that carries the kernel, and the disk the installer partitions.
+    """
+    arguments = []
+    entries = []
+    for index, image in enumerate(Path(image) for image in (images or [])):
+        if index >= 4:
+            raise ValueError("at most four NVMe namespaces are modelled (one PCI function each)")
+        if not image.is_file():
+            raise ValueError(f"NVMe image not found: {image}")
+        arguments += ["-drive",
+                      f"if=none,id=nvme{index},file={path_for(image)},format=raw,snapshot=on",
+                      "-device", f"nvme,bus=pcie.0,addr={2 + index},drive=nvme{index},"
+                                 f"serial=SPARKLAB{index + 1:02d}"]
+        entries.append({"path": str(image),
+                        "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+                        "size": image.stat().st_size,
+                        "pci": f"synthetic: segment 0 bus 1 slot {2 + index}"})
+    return arguments, entries
+
+
 def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=None, pxe_image=None,
         pxe_marker=None, rtc_base=None, seed=None, firmware_version=DEFAULT_VERSION,
         memory=None, smp=None, nor_size=NOR_STATE_SIZE, gdb_port=None,
         allow_marker_only=False, nor_offset=0x3000000, code_offset=None, trace=False,
         accept_mmap_notify=False, gwdt_timeout_ms=None, stop_after_boots=None,
         program_model=None, code_offset_source="not-sliced", trace_pc=None, trace_limit=0, trace_sample=0,
-        extended_ram=False, nvme_image=None):
+        extended_ram=False, nvme_images=None):
     qemu = shutil.which(qemu)
     if qemu is None:
         raise ValueError("build the Spark QEMU profile first: python3 tools/build_qemu.py")
@@ -243,7 +268,7 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
                           stop_after_boots=stop_after_boots, program_model=program_model,
                           code_offset_source=code_offset_source,
                           trace_pc=trace_pc, trace_limit=trace_limit, trace_sample=trace_sample, extended_ram=extended_ram,
-                          nvme_image=nvme_image,
+                          nvme_images=nvme_images,
                           allow_marker_only=allow_marker_only, firmware_path=firmware_path)
 
 
@@ -255,7 +280,7 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                nor_offset=0x3000000, code_offset=None, stop_after_boots=None,
                allow_marker_only=False, firmware_path=None, program_model=None,
                code_offset_source="not-sliced", trace_pc=None, trace_limit=0, trace_sample=0,
-               extended_ram=False, nvme_image=None):
+               extended_ram=False, nvme_images=None):
     firmware_directory = prepared_directory(firmware_version)
     if firmware_path is None:
         firmware_path = firmware_directory / "uefi.fd"
@@ -377,19 +402,12 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                         str(local_path(directory / "packets.pcap"))]
         else:
             command += ["-nic", "none"]
-        if nvme_image is not None:
-            source = Path(nvme_image)
-            if not source.is_file():
-                raise ValueError(f"NVMe image not found: {source}")
-            # snapshot=on: the guest writes to a temporary overlay, and the file the caller named is
-            # never modified by a boot.
-            command += ["-drive", f"if=none,id=nvme0,file={local_path(source)},format=raw,snapshot=on",
-                        "-device", "nvme,bus=pcie.0,addr=2,drive=nvme0,serial=SPARKLAB01"]
-            record["nvme_image"] = str(source)
-            record["nvme_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
-            record["nvme_size"] = source.stat().st_size
-            record["nvme_write_policy"] = "snapshot-per-run; the source file is not written"
-            record["nvme_pci"] = "synthetic: segment 0 bus 1 slot 2 (ECAM base 0xf300000000)"
+        arguments, entries = nvme_arguments(nvme_images)
+        command += arguments
+        if entries:
+            record.setdefault("nvme_images", []).extend(entries)
+            record["nvme_write_policy"] = "snapshot-per-run; no source file is written"
+            record["nvme_image"] = entries[0]["path"]   # kept: one image was the only shape before
         if trace_pc or trace_sample:
             from tools.build_plugin import build as build_plugin
             plugin = build_plugin()
@@ -967,9 +985,10 @@ def main():
                         help="pre-arm the GWDT with this timeout in the monitor, as a BL31 would")
     parser.add_argument("--accept-mmap-notify", action="store_true",
                         help="experimental: answer 0xc4000122 with success instead of NOT_SUPPORTED")
-    parser.add_argument("--nvme-image", type=Path, metavar="PATH",
-                        help="attach a raw NVMe namespace from this image; the boot writes to a "
-                             "per-run snapshot, never to the file")
+    parser.add_argument("--nvme-image", type=Path, metavar="PATH", action="append",
+                        help="attach a raw NVMe namespace from this image; repeat for a second "
+                             "namespace (media and target disk). The boot writes to a per-run "
+                             "snapshot, never to the file")
     parser.add_argument("--extended-ram", action="store_true",
                         help="describe RAM up to the allocation even past 4 GiB; off by default "
                              "because the machine's high MMIO windows are not modelled")
@@ -1085,7 +1104,7 @@ def main():
                         program_model=args.program_model, trace_pc=args.trace_pc,
                         trace_limit=args.trace_limit, trace_sample=args.trace_sample,
                         extended_ram=args.extended_ram,
-                        nvme_image=args.nvme_image,
+                        nvme_images=args.nvme_image,
                         accept_mmap_notify=args.accept_mmap_notify,
                         gwdt_timeout_ms=args.gwdt_timeout_ms,
                         stop_after_boots=args.stop_after_boots)
