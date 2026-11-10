@@ -43,7 +43,8 @@ capsule PKCS#7 trust chain or establish authenticated boot.
 | Subsequent cold boot | Existing NOR state loaded; setup, navigation and all protocols verified again |
 | Native IPv4 PXE | Bundled Realtek UNDI/SNP/DHCP/PXE drivers obtain a lease and download an EFI program over TFTP |
 | Downloaded EFI execution | Original probe prints a fresh per-run token; complete acknowledged transfer matches the probe bytes |
-| GPU, physical NIC firmware or operating system | Not part of this result |
+| Vendor Linux, under the same profile | The recovery kernel and installer initramfs reach userspace: `Run /init as init process`, the installer banner, `VERSION="1.155.49"` (`docs/linux-under-the-profile.md`, `tests/test_profile_userspace.py`) |
+| An installed operating system, GPU and physical NIC firmware | Not part of this result |
 
 The 13 protocols are Security, Cpu, Metronome, Timer, Bds, WatchdogTimer,
 Runtime, Variable, VariableWrite, Capsule, MonotonicCounter, Reset and

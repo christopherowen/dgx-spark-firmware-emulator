@@ -49,10 +49,22 @@ second boot with persistent NOR state pass. See [boot status](boot-status.md).
 
 ## 3. MT8901-related interfaces and controller execution
 
-- [ ] Verify the reference SSPM/power_wrap interface against the Spark's ACPI.
+- [x] Verify the reference SSPM/power_wrap interface against the Spark's ACPI — the interface
+      descriptor table is now recorded field by field (212 fields, `research/spbm-interface.json`) and
+      the structure's base is derived from the DSDT (`\_SB.MTEL` `Memory32Fixed (0x05170000, 0x60000)`,
+      `_CPC` registers at `+0x5C404`), with the table's own bytes as the test anchor
+      (`tests/test_power_interface_base.py`, `tests/test_cppc_map.py`). What that establishes is *where*
+      the registers are read; the mailbox itself is still the item below.
 - [ ] Model mailbox ownership, doorbells, responses, and interrupt delivery.
+      *Blocked on the same thing as the next two items: the firmware that would describe the contract —
+      the SSPM/power-firmware components — is among the fifteen AEAD-encrypted parts, so the protocol has
+      no readable specification to model against.*
 - [ ] Separate protocol stubs from actual remote firmware execution.
+      *Needs a plaintext image of the remote core's firmware, or a unit that exposes the mailbox.*
 - [ ] Identify the remote core, image, ISA and load contract before extending QEMU.
+      *The component map names the partitions (`SSPM`, `SPM`, `SPBM`, `DPM`, `CPUEB`, `HFRP`) and their
+      sizes, but not their ISA or entry contract; every one of them measures as high-entropy, and the
+      encrypted set has no offline path (`docs/hardware-findings.md`).*
 - [x] Add independent subsystem regression scenarios for GPIO, UART IRQ,
       EINT software IRQs, and Root of Trust failure replies.
 

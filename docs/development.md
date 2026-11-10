@@ -267,3 +267,84 @@ run metadata go into ignored `build/`. Use `--timeout 60` on a slower host.
 This command accepts generic QEMU firmware, not an NVIDIA update capsule.
 Missing TPM or entropy-device diagnostics can appear on this minimal machine;
 the pass condition is shell entry, not a clean platform initialization report.
+
+## Two CPUs, and what the second one does
+
+The profile models one or two CPUs. With `--smp 2` the machine starts the primary and holds the
+second parked: the monitor implements no PSCI, so nothing services `CPU_ON`. That is measured, not
+assumed — a run tracing the firmware entry with `--smp 2` records `trace_per_cpu: {"cpu0": 1}` and
+`secondary_cpus: "parked until started"`, so a receipt cannot imply parallel execution that did not
+happen.
+
+## Asking the firmware what settings exist
+
+`tests/fixtures/nvram_census.c` is an EFI application (PXE lane) that enumerates every UEFI
+variable — name, GUID, attributes, size, and the bytes for values up to 512 bytes — and walks the
+ACPI tables through the configuration table, printing each table's signature, length and address.
+Under the profile it returns the firmware's own answer: on 2.158.15, 69-74 variables including
+`Setup`, `SecureBoot`, `AMITCGPPIVAR` and `NvmeDynamicSetupVar`, and 17 tables including FACP,
+APIC, GTDT, PPTT and four SSDTs. `tests/test_census.py` asserts that shape rather than a snapshot,
+because the variable set follows the store the boot used.
+
+Two things it settles for configuration work: which settings are NVRAM-backed (a `Setup` blob of
+0x51 bytes is present and readable), and which interface an ACPI table would describe. Decoding the
+`Setup` fields needs the HII forms from the firmware image, and the SSDTs at the printed addresses
+are where an EC or fan interface would live.
+
+## Running a whole Linux image, not just firmware
+
+`tools/run_linux.py` boots a kernel and initramfs under this QEMU build and records the run the same
+way a firmware boot is recorded: machine, arguments, kernel and initramfs hashes, the QEMU binary's
+hash, the console log, and a verdict — `kernel`, `userspace`, or `not-booted`.
+
+With the vendor recovery archive it does the extraction itself (cached under
+`firmware/downloads/recovery-extract/`, never in the tree):
+
+```sh
+python3 tools/run_linux.py --recovery firmware/downloads/dgx-spark-recovery-1.155.49.tar.gz --timeout 90
+```
+
+That boots `7.0.0-1018-nvidia` and its installer initramfs to userspace: the console shows the
+installer's own banner (`--- FastOS Version`, `NAME="DGX Spark FASTOS"`, `VERSION="1.155.49"`) before
+it starts looking for its media. `tests/test_linux_boot.py` asserts exactly that, so the milestone is
+a regression test rather than a lucky run.
+
+What it does not do yet: run under the firmware profile (the handover path), find the installation
+media, or write to a target disk. Those are the next steps, and each one is a modelling question the
+harness will make visible rather than a guess.
+
+## What the emulator can prove about the levers, in one place
+
+| lever | proof in this tree | limit |
+| --- | --- | --- |
+| fans, contract | `monitor/fan.c` answers `0xC400008D` exactly as `\_SB.FAN0.WFCF` builds it; `tests/test_fan_emulator.py` drives it through a firmware-delivered probe and both fans read back (`R0 4350`, `R1 4350`) | the EC is not modelled; the model is the contract |
+| fans, exact AML | `tests/test_fan_aml.py` executes the vendor's `_FSL`/`_FST` under ACPICA; `_FST` reports the level just set | the SMC itself is inert under ACPICA (no FFH handler) |
+| fans, through Linux | the profile boots the vendor kernel to userspace (`tests/test_profile_userspace.py`); on a unit with `CONFIG_ACPI_FFH=y` the vendor kernel services the `FFixedHW` region and `\_SB.FAN0._FST` returns live per-fan rpm | the *recovery* kernel inside QEMU has no FFH handler, which is what the earlier "REFUSED" recorded — that is a property of that guest, not of the firmware |
+| fans, newest firmware | `FAN-OK` on LVFS `0x2009e0f` and on the Dell 4.1.0 capsule (`research/firmware-catalog.json`) | the EC firmware (`0x3000d07`) is not emulated |
+| power limits | the monitor serves the OS/effective PL slots; the probe writes PL1=45000, reads the effective value, restores (`PL-OK`) | a live unit needs the base address, now derived (0x05170000) |
+| CPU frequency | `tools/cpu_clocks.py` drives the kernel's cpufreq with a saved backup and a refusal for ceilings the firmware does not offer | the profile has no cpufreq policy: the CPPC registers are zero in the model, so `cppc_cpufreq` does not bind |
+| CPU placement (measured on a unit) | two clusters: **ten cores at 3.9 GHz** and **ten at 2.808 GHz**, `performance` governor, `boost` disabled; pinning with `taskset -c 5-9,15-19` is the supported lever and needs no firmware | single-threaded gain is a placement effect, not a clock increase; the DSDT cannot state the ceiling because `_CPC` carries register descriptors, not values |
+| thermal zones | the seeded SOC_THERM block reads back through the vendor's `\_TZ.RREG`: 44.9 / 39.9 / 49.9 / 34.9 °C in the guest | a seed, not a sensor model |
+| DRAM timings | `tools/timing_tables.py` finds and extracts `BCT`/`DDRFSK`/`MISC`; `research/dram-knobs.json` records the firmware's own knob vocabulary | `BCT` carries a four-switch patch (`research/bct-patch.json`); `DDRFSK` and `MISC` are blank in every artifact we hold |
+
+## What can be changed, and what cannot
+
+Three levers were investigated for tuning a Spark from software. Each has a tool, a test and a limit
+written down where it belongs:
+
+| lever | what exists here | limit |
+| --- | --- | --- |
+| **fans** | `tools/fanctl.py` drives the firmware's own ACPI fan device through `/sys/class/thermal` (`_FSL` 0..100), reading `max_state` from the device | the EC's actual response needs a unit; the model in `monitor/fan.c` is the interface, not the fan |
+| **power limits / clocks** | `tools/pl_limits.py` reads and writes the OS PL1..PL4 slots the firmware's interface table names, with backup and restore; the semantics are demonstrated in QEMU (`PL-OK`); the base is derived from the DSDT (`\_SB.MTEL` `Memory32Fixed (0x05170000, 0x60000)`, `_CPC` registers at `+0x5C404`) | SPBM, which arbitrates the claims, ships encrypted; the eSPI service's own PL registers are readable only if its gateway accepts an id the firmware does not document (`research/espi-spbm-registers.json`) |
+| **CPU placement** | measured on units: ten cores at 3.9 GHz, ten at 2.808, `performance` governor, capacity-aware scheduling already preferring the fast ten (`research/cpu-clusters.json`) | `taskset` guarantees placement and removes variance; it does not uncover an idle faster half, and `boost` (present, `0`) has an unmeasured effect |
+| **DRAM timings** | `tools/timing_tables.py` finds and extracts the `BCT`/`DDRFSK`/`MISC` partitions whenever an artifact carries them | `DDRFSK` and `MISC` are blank end to end in the capsules and in the recovery image; `BCT` is a patch, not a table (`docs/ram-timings.md`) |
+| **the capsule's own contents** | `tools/container.py` (declared base + self-described extents), `tools/spkg.py` (SPKG headers and FF-A manifests), `tools/anchors.py` (string references by file offset, base-independent) | the 15 encrypted components are AEAD with unique nonces; a family key in ROM or fuses is not in any artifact |
+| **what a running unit exposes** | `tools/fleet_probe.py` reports, read-only, whether the firmware carries the fan service and whether anything exposes a fan device | it observes; it does not test whether the service answers a read |
+
+And one thing that is now possible: `tools/run_linux.py` boots a whole Linux image — the vendor's
+recovery kernel and installer initramfs reach userspace under QEMU — which is the platform any future
+measurement of these levers on a real image would start from. Booting that same kernel under the
+firmware profile works too, and slowly: `docs/linux-under-the-profile.md` records the four things it
+took (the SCR enables, the console on the command line, LPIs off, and the block the firmware
+declares). Under TCG the guest spends about two minutes of wall time on each second of kernel time,
+so `--timeout` accepts up to an hour for a boot that is expected to reach userspace.
