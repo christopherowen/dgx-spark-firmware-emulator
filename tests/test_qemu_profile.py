@@ -131,6 +131,26 @@ class ProfileIntegrationTests(unittest.TestCase):
         self.probe(words)
 
 
+    def test_two_cpus_bring_up_the_primary_and_park_the_second(self):
+        # The profile sizes the redistributor region from the CPU count. A second CPU must not
+        # disturb the primary: the same probe still prints its marker, and the machine accepts the
+        # configuration instead of refusing it.
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "uart.bin"
+            image.write_bytes(struct.pack("<4I", 0x52a2d408, 0x52800a09, 0xb9000109, 0x14000000))
+            machine = "virt,spark-fw-lab=on,gic-version=3,virtualization=on"
+            command = [os.environ["SPARK_QEMU"], "-M", machine, "-cpu", "max", "-m", "2G",
+                       "-smp", "2", "-nodefaults", "-display", "none", "-monitor", "none",
+                       "-serial", "stdio", "-nic", "none",
+                       "-device", f"loader,file={image},addr=0x80000000,cpu-num=0,force-raw=on"]
+            try:
+                result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, timeout=4, check=False)
+                output = result.stdout
+            except subprocess.TimeoutExpired as expired:
+                output = expired.output or b""
+        self.assertIn(b"P", output, output[-200:])
+
     def test_every_gpio_config_window_is_present(self):
         # Original probe: read the first register of all eleven GPIO config windows the profile adds.
         # A missing window faults before any output, so P means every one of them is mapped.
