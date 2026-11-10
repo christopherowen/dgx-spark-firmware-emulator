@@ -30,6 +30,8 @@ def has_llvm_tools(*names):
 
 
 POLICIES = {"armed": [], "open": ["-DSPARK_NOR_POLICY_OPEN"]}
+# A lab build may run the readback client at the point a DXE driver would, i.e. before the trusted
+# endpoint arms the lockout at ReadyToBoot. It is a model of that stage, not a second entry point.
 
 # 1 MiB is the size the model had before the board's part was modelled: it stays
 # supported so an existing fixture boots unchanged. 32 MiB is the default,
@@ -50,7 +52,7 @@ def latency_flags(write_us, erase_us=None):
 def build_monitor(policy="armed", write_us=0, erase_us=None, nor_size=0x2000000,
                   nor_offset=0x3000000, trace=False, accept_mmap_notify=False,
                   gwdt_timeout_ms=None, ram_top=None, rtc_base=None, code_offset=None,
-                  code_size=None):
+                  code_size=None, program_model="page"):
     if policy not in POLICIES:
         raise ValueError(f"unknown flash policy: {policy}")
     if nor_size not in NOR_SIZES:
@@ -66,7 +68,7 @@ def build_monitor(policy="armed", write_us=0, erase_us=None, nor_size=0x2000000,
         suffix = suffix + f"-nor{nor_size >> 20}m"
     if nor_offset != 0x3000000:
         flags = flags + [f"-DNOR_OFFSET={nor_offset:#x}UL"]
-        suffix = suffix + f"-off{nor_offset >> 20}m"
+        suffix = suffix + f"-off{nor_offset:#x}"
     if trace:
         # Diagnostic builds: the flash service prints each answered request, and the exception
         # handler prints each SMC that reaches it.
@@ -81,12 +83,19 @@ def build_monitor(policy="armed", write_us=0, erase_us=None, nor_size=0x2000000,
         # byte the firmware programmed is what the next boot executes.
         flags = flags + [f"-DSPARK_CODE_OFFSET={int(code_offset):#x}UL",
                          f"-DSPARK_CODE_SIZE={int(code_size):#x}UL"]
-        suffix = suffix + f"-code{int(code_offset) >> 20}m"
+        suffix = suffix + f"-code{int(code_offset):#x}-size{int(code_size):#x}"
+    if program_model not in ("page", "byte"):
+        raise ValueError(f"unknown program model: {program_model}")
+    if program_model == "byte":
+        # Every byte of a pulse is committed when its share of the page budget is spent, so a
+        # reset part-way through leaves a prefix written.
+        flags = flags + ["-DNOR_PROGRAM_MODEL=1"]
+        suffix = suffix + "-byteprog"
     if ram_top is not None and ram_top != 0xc0000000:
         # The monitor must accept buffers anywhere the loader tag says RAM is, or a larger
         # allocation advertises memory the FF-A path refuses to map.
         flags = flags + [f"-DRAM_TOP={int(ram_top):#x}UL"]
-        suffix = suffix + f"-top{int(ram_top) >> 30}g"
+        suffix = suffix + f"-top{int(ram_top):#x}"
     if rtc_base is not None:
         # Both clocks in a run must be the pinned one: QEMU's -rtc and the monitor's own service.
         flags = flags + [f"-DRTC_BASE={int(rtc_base)}UL"]
@@ -102,7 +111,7 @@ def build_monitor(policy="armed", write_us=0, erase_us=None, nor_size=0x2000000,
     output.mkdir(parents=True, exist_ok=True)
     compiler, linker, objcopy = [find_tool(x) for x in ("clang", "ld.lld", "llvm-objcopy")]
     objects = []
-    for source in ("start.S", "monitor.c", "nor.c", "ffa_memory.c"):
+    for source in ("start.S", "monitor.c", "nor.c", "fan.c", "spbm.c", "ffa_memory.c"):
         obj = output / (source + ".o")
         subprocess.run([compiler, "--target=aarch64-none-elf", "-O2", "-ffreestanding",
                         "-fno-builtin", "-fno-stack-protector",

@@ -15,13 +15,36 @@ static void put_le(unsigned char *p, unsigned long value, unsigned count) {
         p[i] = value >> (8 * i);
 }
 
+/* The shipped read path is 32-bit and says so twice: the handler rejects an address above
+ * 0xffffffff (image 0x1eb84-0x1eb8c), and the callee rejects `address + count` when it carries out
+ * of 32 bits or does not survive truncation (image 0x2397c-0x23994, which answers -3 with
+ * "ERROR: Buffer too small"). The program/erase helper's 24-bit address does not apply to reads. */
+static int wide_enough(unsigned long address, unsigned long count) {
+    if (address > 0xffffffffUL)
+        return 0;
+    unsigned long sum = (address + count) & 0xffffffffUL;
+    if (address + count > 0xffffffffUL)
+        return 0;
+    return sum == address + count;
+}
+
 static int contains(unsigned long address, unsigned long size) {
-    return address >= NOR_OFFSET && size <= NOR_SIZE && address - NOR_OFFSET <= NOR_SIZE - size;
+#if NOR_OFFSET > 0
+    if (address < NOR_OFFSET)
+        return 0;
+#endif
+    return size <= NOR_SIZE && address - NOR_OFFSET <= NOR_SIZE - size;
 }
 
 /* The latch starts armed because the board's own trusted sender arms it during
  * cold boot, before any normal-world component runs. A build may open it to
- * model the pre-arming window. */
+ * model the pre-arming window.
+ *
+ * The shipped gate is at image 0x1e3a4 and reads: `ldrb w0,[lock] ; and #1 ;
+ * b.eq dispatch` then `ldrb w0,[caller] ; and #1 ; b.eq dispatch`, i.e. refuse
+ * only when the latch is set *and* the sender is not the trusted endpoint.
+ * Command 8 is that endpoint's arming request and is never accepted from
+ * anyone else. */
 static int policy_armed = 1;
 
 void nor_set_policy_armed(int armed) { policy_armed = armed != 0; }
@@ -45,8 +68,8 @@ int nor_policy_armed(void) { return policy_armed; }
 
 /* Kept out of line so a tracer can break on the program pulse itself; the
  * compiler otherwise folds it into both call sites. */
-__attribute__((noinline)) static void delay_us(unsigned long microseconds) {
-#if NOR_WRITE_US > 0 || NOR_ERASE_US > 0
+__attribute__((noinline)) __attribute__((unused)) static void delay_us(unsigned long microseconds) {
+#if (NOR_WRITE_US > 0 || NOR_ERASE_US > 0) && !defined(NOR_DELAY_HOOK)
     unsigned long freq, start, now;
     __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
     __asm__ volatile("mrs %0, cntpct_el0" : "=r"(start));
@@ -60,7 +83,30 @@ __attribute__((noinline)) static void delay_us(unsigned long microseconds) {
 #endif
 }
 
-static void write_delay(void) { delay_us(NOR_WRITE_US); }
+/* How a program pulse is modelled.
+ *
+ * 0 (`page-before-delay-v1`): the whole request is committed, then the page budget is
+ *    spent. A reset that lands during the pulse leaves everything written.
+ * 1 (`linear-request-byte-v1`): each physical page's budget is spread across the bytes
+ *    that pulse covers, and each byte is committed when its share is spent. A reset
+ *    that lands part-way leaves a prefix written — which is what a real part does,
+ *    though linearly is an approximation of how the die actually settles.
+ */
+#ifndef NOR_PROGRAM_MODEL
+#define NOR_PROGRAM_MODEL 0
+#endif
+
+#ifdef NOR_DELAY_HOOK
+/* Test seam: a native test supplies the clock so cuts are exact and fast. */
+void nor_delay_hook(unsigned long microseconds);
+static void model_delay(unsigned long microseconds) { nor_delay_hook(microseconds); }
+#else
+static void model_delay(unsigned long microseconds) { delay_us(microseconds); }
+#endif
+
+#if NOR_PROGRAM_MODEL == 0
+static void write_delay(void) { model_delay(NOR_WRITE_US); }
+#endif
 static void erase_delay(void) { delay_us(NOR_ERASE_US); }
 
 
@@ -127,7 +173,7 @@ int nor_request(unsigned char *flash, unsigned long flash_size, unsigned char *b
         put_le(b + 0x31, NOR_OFFSET, 8);
         put_le(b + 0x39, NOR_SIZE, 8);
     } else if (cmd == 0 && request == 4 && count && count <= NOR_BLOCK && count <= size - 32 &&
-               contains(address, count)) {
+               wide_enough(address, count) && contains(address, count)) {
         response = count;
         for (unsigned long i = 0; i < count; i++)
             b[32 + i] = flash[address - NOR_OFFSET + i];
@@ -146,10 +192,24 @@ int nor_request(unsigned char *flash, unsigned long flash_size, unsigned char *b
                 unsigned long page = NOR_PAGE - ((start + done) & (NOR_PAGE - 1));
                 if (page > request - done)
                     page = request - done;
+#if NOR_PROGRAM_MODEL == 1
+                /* Spread this page's whole budget over the bytes it covers and commit each byte
+                 * when its share is spent. The deadline is cumulative and rounded up, so a byte
+                 * is never committed early and 400 us is never spent as 400/256. */
+                unsigned long spent = 0;
+                for (unsigned long i = 0; i < page; i++) {
+                    unsigned long due = (unsigned long)(((unsigned long long)(i + 1) * NOR_WRITE_US
+                                                         + page - 1) / page);
+                    model_delay(due - spent);
+                    spent = due;
+                    target[done + i] &= b[32 + done + i];
+                }
+#else
                 for (unsigned long i = 0; i < page; i++)
                     target[done + i] &= b[32 + done + i];
-                done += page;
                 write_delay();
+#endif
+                done += page;
             }
         }
     } else if (cmd == 2 && request == 4 && count && !(count & (NOR_BLOCK - 1)) &&

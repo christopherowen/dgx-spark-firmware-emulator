@@ -12,21 +12,18 @@ SIZE = 0x2000000
 BANK = 0x40000
 
 
+from tests.store_fixtures import entry as _entry  # the shared builder
+from tests.store_fixtures import image as _image
+
+
 def variable(name: str, data: bytes, attributes: int = 0x83, index: int = 0x0C) -> bytes:
-    body = bytes([index]) + name.encode("ascii") + b"\x00" + data
-    size = 10 + len(body)  # index byte is part of the body
-    return b"NVAR" + size.to_bytes(2, "little") + b"\xff\xff\xff" + bytes([attributes]) + body
+    # This suite exercises the editor, which keys off a non-zero index byte; the shared builder
+    # defaults to zero, so the difference is stated here rather than lost in a copy.
+    return _entry(name, data, attributes=attributes, index=index)
 
 
 def image(entries: list[bytes]) -> bytes:
-    data = bytearray(b"\xff" * SIZE)
-    data[0x28:0x2c] = b"_FVH"
-    data[0x40028:0x4002c] = b"_FVH"
-    cursor = 0x60
-    for entry in entries:
-        data[cursor:cursor + len(entry)] = entry
-        cursor += len(entry)
-    return bytes(data)
+    return _image(entries)
 
 
 def blank_index(count: int = 0) -> bytes:

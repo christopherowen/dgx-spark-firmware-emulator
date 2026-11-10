@@ -2,6 +2,8 @@
  * Original experimental Spark firmware laboratory monitor.
  */
 #include "nor.h"
+#include "fan.h"
+#include "spbm.h"
 #include "ffa_memory.h"
 
 typedef unsigned long u64;
@@ -14,7 +16,24 @@ typedef unsigned short u16;
         x;                                                                                         \
     })
 #define WRITE(reg, x) __asm__ volatile("msr " #reg ", %0" ::"r"((u64)(x)) : "memory")
-#define SCR ((1UL << 10) | (1UL << 11) | (1UL << 8) | (1UL << 18))
+/* The SCR_EL3 this profile presents, including the enables for the newer system registers a current
+ * Linux kernel programs in its early boot. Without them each write traps to EL3, and an EL3 that
+ * does not answer it aborts the boot:
+ *
+ *   25 ENSCXT    SCXTNUM_EL0/EL1 (per-task context numbers)
+ *   27 FGTEN     the fine-grained trap registers
+ *   38 HXEN      HCRX_EL2
+ *   39 GCSEN     GCSCR_EL1 / GCSCRE0_EL1 — guarded control stack
+ *   43 TCR2EN    TCR2_EL1
+ *   44 SCTLR2En  SCTLR2_EL2
+ *   45 PIEN      PIR_EL1 / PIRE0_EL1 — permission indirection
+ *
+ * The list was found by making the traps name themselves: QEMU logs the register and the controls
+ * when an access is routed to EL3 from EL1 with no visible cause. QEMU masks a bit whose feature the
+ * CPU lacks, so the set is safe on a model that implements less. They belong in the value itself
+ * because the monitor rewrites SCR_EL3 on the first SMC. */
+#define SCR ((1UL << 10) | (1UL << 11) | (1UL << 8) | (1UL << 18) | (1UL << 25) | (1UL << 27) | \
+             (1UL << 38) | (1UL << 39) | (1UL << 43) | (1UL << 44) | (1UL << 45))
 #define SUCCESS 0x84000061UL
 #define ERROR 0x84000060UL
 #define DIRECT_REQ 0xc400006fUL
@@ -238,6 +257,86 @@ void boot(void) {
     WRITE(SPSR_EL3, 0x3c5);
     enter(0, 0x680000);
 }
+/* Registers the secure world answers but does not implement. Keyed by the instruction with its
+ * read/write bit and its target register removed, so a write and a later read of the same register
+ * find each other. */
+typedef struct {
+    u32 key;
+    u64 value;
+    u32 accesses;
+} sysreg_entry;
+#define SYSREG_ENTRIES 16
+static sysreg_entry sysregs[SYSREG_ENTRIES];
+
+/* The register is named by the syndrome, not by the instruction the guest was executing: reading
+ * that instruction from EL3 means dereferencing a guest virtual address with translation off, and
+ * the abort that caused (FAR at a kernel address, EL3 faulting) is exactly what this avoids. */
+static void sysreg_access(u64 *r, u64 esr) {
+    u32 iss = (u32)(esr & 0x1ffffffu);
+    unsigned op0 = (iss >> 20) & 0x3;
+    unsigned op2 = (iss >> 17) & 0x7;
+    unsigned op1 = (iss >> 14) & 0x7;
+    unsigned crn = (iss >> 10) & 0xf;
+    unsigned rt = (iss >> 5) & 0x1f;
+    unsigned crm = (iss >> 1) & 0xf;
+    int read = (iss >> 0) & 1;
+    u32 key = ((u32)op0 << 16) | ((u32)op1 << 12) | ((u32)crn << 8) | ((u32)crm << 4) | op2;
+    unsigned target = rt;
+    for (int i = 0; i < SYSREG_ENTRIES; i++) {
+        if (sysregs[i].key == key || sysregs[i].key == 0) {
+            if (sysregs[i].key == 0) {
+                sysregs[i].key = key;
+                sysregs[i].value = 0;
+            }
+            if (read) {
+                r[target] = sysregs[i].value;
+            } else {
+                sysregs[i].value = r[target];
+            }
+            if (sysregs[i].accesses++ == 0) {
+                console_puts("\nMON: sysreg answered S");
+                hex(op0);
+                console_puts("_");
+                hex(op1);
+                console_puts("_C");
+                hex(crn);
+                console_puts("_C");
+                hex(crm);
+                console_puts("_");
+                hex(op2);
+                console_puts(read ? " read" : " write");
+                if (!read) {
+                    console_puts(" value=");
+                    hex(r[target]);
+                }
+                console_puts(" hcr=");
+                hex(READ(HCR_EL2));
+                console_puts(" scr=");
+                hex(READ(SCR_EL3));
+                console_puts(" cptr3=");
+                hex(READ(CPTR_EL3));
+                console_puts(" vbar2=");
+                hex(READ(VBAR_EL2));
+                console_puts(" vbar3=");
+                hex(READ(VBAR_EL3));
+                console_puts(" esr2=");
+                hex(READ(ESR_EL2));
+                console_puts(" esr=");
+                hex(READ(ESR_EL3));
+                console_puts(" spsr=");
+                hex(READ(SPSR_EL3));
+                console_puts(" cur=");
+                hex(READ(CurrentEL));
+                console_puts("\n");
+            }
+            return;
+        }
+    }
+    console_puts("\nMON: sysreg table full esr=");
+    hex(esr);
+    console_puts("\n");
+}
+
 static void logcall(u64 *r, u64 level, u64 esr) {
     console_puts("\nMON: EL");
     hex(level);
@@ -249,6 +348,22 @@ static void logcall(u64 *r, u64 level, u64 esr) {
         console_puts(" ");
         hex(r[i]);
     }
+    /* The instruction that trapped, so a system-register access can be named rather than guessed,
+     * and the trap controls that would explain a system-register trap at all. */
+    console_puts(" elr=");
+    hex(level == 3 ? READ(ELR_EL3) : READ(ELR_EL2));
+    console_puts(" scr=");
+    hex(READ(SCR_EL3));
+    console_puts(" cptr3=");
+    hex(READ(CPTR_EL3));
+    console_puts(" hcr=");
+    hex(READ(HCR_EL2));
+    console_puts(" cptr2=");
+    hex(READ(CPTR_EL2));
+    console_puts(" sctlr1=");
+    hex(READ(SCTLR_EL1));
+    console_puts(" spsr3=");
+    hex(READ(SPSR_EL3));
     console_puts("\n");
 }
 /* The RTC the firmware reads starts at the base the harness pins, so two runs that were told to
@@ -425,6 +540,20 @@ void handle(u64 *r, u64 level) {
         r[0] = 0;
         return;
     }
+    if (esr >> 26 == 0x18) {
+        /* A system-register access this secure world answers rather than implements: the value a
+         * read returns is what the non-secure world last wrote, and zero before that. That is what
+         * an unimplemented optional feature looks like from the caller's side, it keeps the boot
+         * moving, and every access is named once in the log so the list of registers a faithful
+         * model would need is written down rather than guessed. */
+        u64 elr = level == 3 ? READ(ELR_EL3) : READ(ELR_EL2);
+        sysreg_access(r, esr);
+        if (level == 3)
+            WRITE(ELR_EL3, elr + 4);
+        else
+            WRITE(ELR_EL2, elr + 4);
+        return;
+    }
     if (esr >> 26 != 0x17 && esr >> 26 != 0x16) {
         logcall(r, level, esr);
         console_puts("MON: abort FAR=");
@@ -460,6 +589,10 @@ void handle(u64 *r, u64 level) {
         return;
     }
     if (fid == 0xc400008d && ns && (r[1] & 0xffff) == 0x8003 && rtc_service(r))
+        return;
+    if (fid == 0xc400008d && ns && fan_request(r))
+        return;
+    if (spbm_request(r))
         return;
     if (trng_supported(fid)) { trng(r, fid); return; }
     if (fid == 0x84000063) {
@@ -614,6 +747,34 @@ void handle(u64 *r, u64 level) {
         success(r);
         return;
     }
+#ifdef MONITOR_TRACE
+    /* The firmware's runtime variable code speaks FF-A to an endpoint this monitor does not serve,
+     * and guessing at the protocol once crashed the firmware. So the request is written down first:
+     * the endpoints, the sizes, and the first bytes of the buffer the caller filled in. */
+    if (fid == DIRECT_REQ) {
+        console_puts("\nDIRECT_REQ a1=");
+        hex(r[1]);
+        console_puts(" a2=");
+        hex(r[2]);
+        console_puts(" a3=");
+        hex(r[3]);
+        console_puts(" a4=");
+        hex(r[4]);
+        /* shared_address is only ever set after guest_buffer() accepted it as RAM, so reading it
+         * here with translation off cannot fault — the same validation the flash service relies on. */
+        if (shared_address && shared_size) {
+            console_puts(" buf=");
+            unsigned char *b = (unsigned char *)shared_address;
+            unsigned long window = shared_size < 48 ? (unsigned long)shared_size : 48UL;
+            for (unsigned long i = 0; i < window; i++) {
+                hex(b[i]);
+                console_puts(" ");
+            }
+            console_puts("size=");
+            hex(shared_size);
+        }
+    }
+#endif
     if (fid == DIRECT_REQ && (r[1] & 0xffff) == 0x8002) {
         unsigned char *b = (unsigned char *)shared_address;
         if (r[1] != 0x80048002 || !shared_address || r[3] != 1 || r[4] != shared_size) {
@@ -632,6 +793,12 @@ void handle(u64 *r, u64 level) {
         r[1] = ((endpoints & 0xffff) << 16) | ((endpoints >> 16) & 0xffff);
         return;
     }
+    /* PARTITION_INFO_GET. This model answers with **one** partition — STMM — because that is the one the
+     * modelled boot talks to, while a real unit enumerates twenty (research/ffa-partitions-live.json
+     * records the measured list, including the fan service at 0x8003). Responding with the measured list
+     * would be more faithful only if the descriptor encoding were verified against a guest that parses it;
+     * emitting an unverified structure is exactly the kind of guess that has crashed this firmware before,
+     * so the model stays deliberately narrow and says so here. */
     if (fid == 0x84000068) {
         u64 rx = ns ? ns_rx : sp_rx;
         if ((r[1] || r[2] || r[3] || r[4]) && (r[1] != 0x8afb129b || r[2] != 0x64ca4760 ||
