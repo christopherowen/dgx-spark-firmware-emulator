@@ -67,6 +67,28 @@ class TwoNamespaceTests(unittest.TestCase):
         self.assertEqual(entry["pci"], "synthetic: segment 0 bus 1 slot 2")
         self.assertRegex(entry["sha256"], r"^[0-9a-f]{64}$")
 
+    def test_a_large_image_is_hashed_without_being_loaded(self):
+        """A target disk is gigabytes; reading it whole is how a boot becomes an OOM kill.
+
+        A sparse 2 GiB file costs nothing on disk and almost nothing to hash, so the check is that the
+        receipt's digest is the streamed one and that the process did not balloon.
+        """
+        big = Path(self.directory.name) / "big.img"
+        with big.open("wb") as handle:
+            handle.truncate(2 * 1024 * 1024 * 1024)
+        before = Path("/proc/self/statm").read_text().split()[1]
+        _, record = attach([big])
+        after = Path("/proc/self/statm").read_text().split()[1]
+        grown_mb = (int(after) - int(before)) * 4096 / (1024 * 1024)
+        self.assertLess(grown_mb, 256, f"the hash grew the process by {grown_mb:.0f} MiB")
+        self.assertEqual(record["nvme_images"][0]["size"], 2 * 1024 * 1024 * 1024)
+        import hashlib
+        expected = hashlib.sha256()
+        with big.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                expected.update(block)
+        self.assertEqual(record["nvme_images"][0]["sha256"], expected.hexdigest())
+
     def test_more_than_four_is_refused(self):
         extra = [self.media] * 5
         with self.assertRaises(ValueError):

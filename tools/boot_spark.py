@@ -175,8 +175,14 @@ def nvme_arguments(images, path_for=local_path):
                       f"if=none,id=nvme{index},file={path_for(image)},format=raw,snapshot=on",
                       "-device", f"nvme,bus=pcie.0,addr={2 + index},drive=nvme{index},"
                                  f"serial=SPARKLAB{index + 1:02d}"]
+        # Streamed, not read whole: a target disk is gigabytes and reading it into memory is how a
+        # boot becomes an OOM kill instead of a run.
+        digest = hashlib.sha256()
+        with image.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
         entries.append({"path": str(image),
-                        "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+                        "sha256": digest.hexdigest(),
                         "size": image.stat().st_size,
                         "pci": f"synthetic: segment 0 bus 1 slot {2 + index}"})
     return arguments, entries
@@ -885,15 +891,48 @@ def parse_megabytes(text: str) -> int:
     return int(value * units.get(suffix, 1))
 
 
-def available_megabytes():
-    try:
-        with open("/proc/meminfo", encoding="ascii") as handle:
-            for line in handle:
-                if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) // 1024
-    except OSError:
-        return None
-    return None
+def available_megabytes(cgroup_root=Path("/sys/fs/cgroup"), host_megabytes=None):
+    """Memory a boot may use: host `MemAvailable`, or the cgroup's headroom if that is smaller.
+
+    Reading only `/proc/meminfo` is not enough. Inside a container the kernel's OOM killer applies the
+    cgroup's own limit, and a guest that the host could fit is killed with SIGKILL the moment the
+    group reaches it — which reads as a mysterious exit 137, not as a refusal. This host is a cgroup
+    with a 16 GiB cap, and a 3 GiB guest was killed that way with 7.6 GiB reported free.
+
+    `host_megabytes` replaces the `/proc/meminfo` reading. The rule this function implements is
+    "the smaller of the two", and the host's own number changes between any two calls, so a test that
+    wants to check the rule supplies it instead of reading it twice and comparing.
+    """
+    host = host_megabytes
+    if host is None:
+        try:
+            with open("/proc/meminfo", encoding="ascii") as handle:
+                for line in handle:
+                    if line.startswith("MemAvailable:"):
+                        host = int(line.split()[1]) // 1024
+                        break
+        except OSError:
+            host = None
+
+    limit = usage = None
+    # cgroup v2 first, then v1, both at the root the caller named so a test can point elsewhere.
+    for limit_name, usage_name in (("memory.max", "memory.current"),
+                                   ("memory/memory.limit_in_bytes", "memory/memory.usage_in_bytes")):
+        try:
+            limit_text = (cgroup_root / limit_name).read_text().strip()
+            usage_text = (cgroup_root / usage_name).read_text().strip()
+        except OSError:
+            continue
+        if limit_text == "max":
+            continue
+        limit = int(limit_text) // (1024 * 1024)
+        usage = int(usage_text) // (1024 * 1024)
+        break
+    # A limit of ~2**63 means "unlimited" on a v1 hierarchy.
+    if limit is not None and limit < 1 << 40:
+        headroom = max(limit - (usage or 0), 0)
+        return headroom if host is None else min(host, headroom)
+    return host
 
 
 def stage_foreign(source: Path) -> Path:
