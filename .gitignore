@@ -20,3 +20,13 @@ __pycache__/
 *.pkg
 *.pem
 *.key
+
+# built artefacts
+kernel/*.ko
+kernel/*.o
+kernel/*.mod
+kernel/.*.cmd
+kernel/modules.order
+
+# local scratch (signing tools, unsigned copies, one-off builds)
+work/
