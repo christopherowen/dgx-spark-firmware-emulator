@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1040" height="456" viewBox="0 0 1040 456" role="img" aria-labelledby="title desc">
   <title id="title">What the profile exposes, after PR 1 and after PR 2</title>
-  <desc id="desc">After the first pull request the machine exposed a NIC and a watchdog whose GTDT described the generic frames, with one CPU and no storage. After this second pull request the watchdog sits at the board's frames with the corrected interrupt, an optional NVMe controller answers on bus 1 slot 2, two CPUs are modelled with the second parked, the harness records which layout and program model produced a run, and a trace plugin lives in the repository.</desc>
+  <desc id="desc">After the first pull request the machine exposed a NIC and a watchdog whose GTDT described the generic frames, with one CPU and no storage. After this second pull request the watchdog sits at the board's frames with the corrected interrupt, NVMe namespaces can be attached one per function and carry their own snapshots, the guest OS is given the same endpoints through the configuration window its own ACPI names, two CPUs are modelled with the second parked, the harness records which layout and program model produced a run, and a trace plugin lives in the repository.</desc>
 
   <style>
     .frame { fill: #ffffff; stroke: #c8cdd4; stroke-width: 1.5; }
@@ -54,8 +54,8 @@
   <text class="small" x="558" y="155">bus 1 slot 0, untouched</text>
 
   <rect class="storage" x="548" y="176" width="200" height="44" rx="5"/>
-  <text class="label" x="558" y="195">NVMe (optional)</text>
-  <text class="small" x="558" y="211">bus 1 slot 2, snapshot</text>
+  <text class="label" x="558" y="195">NVMe, one per namespace</text>
+  <text class="small" x="558" y="211">slot 2, 3, … own snapshot</text>
 
   <rect class="timer" x="548" y="232" width="200" height="44" rx="5"/>
   <text class="label" x="558" y="251">GWDT at the board frames</text>
@@ -65,16 +65,22 @@
   <text class="label" x="558" y="307">two CPUs</text>
   <text class="small" x="558" y="323">second parked, and said so</text>
 
-  <rect class="tool" x="762" y="176" width="240" height="184" rx="6"/>
+  <rect class="tool" x="548" y="340" width="200" height="44" rx="5"/>
+  <text class="label" x="558" y="359">the OS's own window</text>
+  <text class="small" x="558" y="375">segment 15, 0x29000000</text>
+
+  <rect class="tool" x="762" y="176" width="240" height="208" rx="6"/>
   <text class="label" x="774" y="198">Harness</text>
   <text class="small" x="774" y="218">layout from the input</text>
   <text class="small" x="774" y="236">two program models, named</text>
   <text class="small" x="774" y="254">trace plugin in-tree</text>
   <text class="small" x="774" y="272">store fixtures, no vendor bytes</text>
   <text class="small" x="774" y="290">extended RAM, opt-in</text>
-  <text class="small" x="774" y="308">records: watchdog, eSPI</text>
-  <text class="small" x="774" y="326">eSPI: named by the capsule, not reached here</text>
+  <text class="small" x="774" y="308">records: watchdog, eSPI, CPU</text>
+  <text class="small" x="774" y="326">eSPI: named by the capsule</text>
+  <text class="small" x="774" y="344">oracles that execute, never grep</text>
+  <text class="small" x="774" y="362">fan: both status ids read</text>
 
   <text class="small" x="40" y="424">the same two CI jobs as #1, now covering all of this · every claim measured against the merged tip, not a memory of it</text>
-  <text class="small" x="40" y="442">the harness records which layout and which program model produced each run; the profile cases run in the second CI job</text>
+  <text class="small" x="40" y="442">393 tests in 74 files on this tip, 46 of them skipped without the vendor capsules · the profile cases run in the second CI job</text>
 </svg>

@@ -51,6 +51,12 @@
     "the measured gain of pinning, which needs a benchmark on a unit",
     "the throughput effect of a 2% clock at a fixed workload \u2014 the clock moved, the work was not measured"
   ],
+  "provenance": {
+    "platform": "the GB10 SoC in a DGX Spark, 20 CPUs through one cppc_cpufreq driver; not a development host",
+    "why_not_this_host": "an x86 development machine cannot produce these readings: it reports intel_pstate with a different policy count and a different clock domain, so the 20-policy split, the CPPC headroom per policy and the two-capacity scheduler view identify the platform on their own",
+    "artifact": "none stored: the values were read from sysfs in one session per unit and only this table survived, so nothing in this repository can re-derive them. What can be checked is the arithmetic between the two halves of the record, and that is what tests/test_cpu_clusters.py does.",
+    "writes": "the cluster readings are read-only; the one write this record claims is the boost experiment below, on a single unit, with the original value restored"
+  },
   "scheduler_capacity": {
     "slow_cluster": "718-731",
     "fast_cluster": "997-1024",
@@ -106,6 +112,12 @@
         }
       },
       "how": "`max_perf` and `cpuinfo_max_freq` read from each policy's sysfs; equal headroom explains every policy that did not move, and the three with headroom are exactly the groups that did"
-    }
+    },
+    "unit": {
+      "how_many": 1,
+      "when": "2026-11-10",
+      "authorised": "owner-authorised write, restored to 0 afterwards"
+    },
+    "artifact": "none stored: the before and after readings were taken over sysfs in one session and only this table survived, so the numbers cannot be re-derived here"
   }
 }
