@@ -108,6 +108,17 @@ static SPARK_FAN_KEEP unsigned spark_fan_rpm_for_level(unsigned long level)
 	return SPARK_FAN_RPM_MIN + ((SPARK_FAN_RPM_MAX - SPARK_FAN_RPM_MIN) * (unsigned)level) / 100;
 }
 
+/* The rule the read path applies, outside the kernel-facing half so a host test can execute it:
+ * the highest level any answering id reports, and whether anything answered at all. */
+static SPARK_FAN_KEEP unsigned long spark_fan_best_level(const unsigned long *levels, unsigned count)
+{
+	unsigned long best = 0;
+	for (unsigned i = 0; i < count; i++)
+		if (levels[i] > best)
+			best = levels[i];
+	return best;
+}
+
 #ifndef SPARK_FAN_HOST_TEST
 
 module_param(allow_pin, bool, 0444);
@@ -172,19 +183,34 @@ static int spark_fan_get_max_state(struct thermal_cooling_device *cdev,
 	return 0;
 }
 
+/* Both documented status ids are read, and the highest level wins.
+ *
+ * `0x06000704` is the id \_SB.FAN0._FST uses and `0x06000706` the id \_SB.FAN1._FST uses, so they are
+ * two fans on the reference unit. Measured on an ACUM027 unit (2026-11-10, Secure Boot off, module
+ * built with the unit's own kbuild): `0x06000704` answers 0 and `0x06000706` answers 4050 rpm, stable
+ * across repeated reads with the chassis at 41.8 C. Reading only the first id therefore reported a
+ * stopped fan on a machine whose fan was running; reading both and taking the larger level is the
+ * conservative reading of an answer that is split across the pair.
+ */
 static int spark_fan_get_cur_state(struct thermal_cooling_device *cdev,
 				   unsigned long *state)
 {
-	u64 answer = 0;
+	static const u32 ids[] = { SPARK_FAN_COMMAND_STATUS0, SPARK_FAN_COMMAND_STATUS1 };
+	unsigned long levels[sizeof(ids) / sizeof(ids[0])];
+	unsigned answered = 0;
 	(void)cdev;
-	unsigned rpm;
-	int ret = spark_fan_call(spark_fan_read_request(SPARK_FAN_COMMAND_STATUS0), &answer);
 
-	rpm = (unsigned)answer;
+	for (unsigned i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) {
+		u64 answer = 0;
+		int ret = spark_fan_call(spark_fan_read_request(ids[i]), &answer);
 
-	if (ret)
-		return ret;
-	*state = spark_fan_level_for_rpm(rpm & 0xffff);
+		if (ret)
+			continue;      /* one id refusing does not make the other id's answer wrong */
+		levels[answered++] = spark_fan_level_for_rpm((unsigned)answer & 0xffff);
+	}
+	if (!answered)
+		return -EIO;
+	*state = spark_fan_best_level(levels, answered);
 	return 0;
 }
 

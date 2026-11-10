@@ -19,6 +19,58 @@ MODULE = ROOT / "kernel" / "spark_fan.c"
 MODEL = ROOT / "monitor" / "fan.c"
 
 
+class FanReadRuleTests(unittest.TestCase):
+    """The rule that decides what `cur_state` reports when the two status ids disagree.
+
+    Measured on an ACUM027 unit (2026-11-10): id `0x06000704` answers 0 and id `0x06000706` answers
+    4050 rpm. A read path that consults one id reports a stopped fan on a running machine, so the rule
+    is "the highest level any answering id reports", and it is executed here rather than described.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("cc"):
+            raise unittest.SkipTest("a C compiler is required")
+        cls.directory = tempfile.TemporaryDirectory(prefix="spark-fan-rule-")
+        work = Path(cls.directory.name)
+        shim = work / "shim.c"
+        shim.write_text(
+            '#include <stdint.h>\n'
+            'typedef uint64_t u64;\ntypedef uint32_t u32;\n'
+            '#define __init\n#define __exit\n'
+            '#define SPARK_FAN_HOST_TEST 1\n'
+            '#include "' + str(MODULE) + '"\n'
+            'unsigned long host_best(const unsigned long *levels, unsigned count)\n'
+            '{ return spark_fan_best_level(levels, count); }\n')
+        library = work / "rule.so"
+        subprocess.run(["cc", "-shared", "-fPIC", "-O2", "-Wall", "-I", str(MODULE.parent),
+                        str(shim), "-o", str(library)], check=True, capture_output=True)
+        cls.model = ctypes.CDLL(str(library))
+        cls.model.host_best.argtypes = [ctypes.POINTER(ctypes.c_ulong), ctypes.c_uint]
+        cls.model.host_best.restype = ctypes.c_ulong
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def best(self, *levels):
+        values = (ctypes.c_ulong * len(levels))(*levels)
+        return self.model.host_best(values, len(levels))
+
+    def test_one_answering_id_is_the_answer(self):
+        self.assertEqual(self.best(91), 91)
+
+    def test_a_split_answer_takes_the_running_fan(self):
+        """0 for the first id and 91 for the second is the measured case: report the running one."""
+        self.assertEqual(self.best(0, 91), 91)
+
+    def test_two_running_ids_take_the_higher(self):
+        self.assertEqual(self.best(40, 91, 12), 91)
+
+    def test_nothing_answering_is_zero_and_the_caller_decides(self):
+        self.assertEqual(self.best(0, 0), 0)
+
+
 class KernelModuleEncodingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
