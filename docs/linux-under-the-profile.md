@@ -744,6 +744,75 @@ encoding, floor readback, saturation, automatic restore and rejected
 operation/length/UUID/endpoint combinations. The run retains
 `unittest.log` and `monitor-integration-tests.log`.
 
+## Duty-derived packet estimates and evidence boundaries
+
+The packet model now uses the recovered EC's published-estimate equation:
+
+```text
+estimate = min + (duty - 14) * (max - min) / 86
+duty < 14 -> estimate 0; duty > 100 -> estimate max
+CPU:  min=1260, max=9000
+rear: min=1890, max=13500
+```
+
+For each nonzero, set clamp, it clips the clamp to that fan's range and
+solves the same equation for duty:
+`duty = 14 + (clipped_clamp - min) * 86 / (max - min)`.
+Zero selects zero duty and a zero estimate. Rational percent retains the
+fraction rather than inventing the EC's PWM resolution: the trace prints
+`numerator/denominator`, with denominator `max-min`. The forward equation
+applied to that rational duty returns the clipped clamp exactly. For example,
+4500 gives CPU `387000/7740 = 50%`, rear `387000/11610 = 33 1/3%`, and both
+estimates are 4500. This is algebraic consistency, **not evidence that a real
+EC applies those duties for that clamp**.
+
+For unset clamp `0xffff`, the model does not execute the EC's thermal curve.
+It uses a **model baseline** of 14% duty and estimates 1260/1890; the trace
+labels this `duty-source=unset-model-baseline`, versus
+`duty-source=inverse-estimate` for set clamps. Every traced packet includes
+the clamp, each duty ratio in percent, and each `model-rpm-estimate`. Packet
+estimates have independent state from the OEM/AML fan path.
+
+The provenance boundary is:
+
+| Pipeline part | Evidence or assumption |
+| --- | --- |
+| Duty-to-published-estimate formula, 14..100 duty bounds, CPU/rear ranges | Recovered EC code, described in [the EC finding](fan-control-from-dsdt.md); not a new physical measurement |
+| Clamp value and wire readback | Observed guest module/CLI requests against the packet model |
+| Set clamp to duty | Algebraic inverse with per-fan range clipping; a model choice, not a recovered controller or calibrated PWM mapping |
+| Zero clamp to stopped model fans | Explicit model policy; a zero physical lower bound does not imply ownership or that an EC stops its fans |
+| Unset clamp to 14% and minimum estimates | Explicit model baseline; the real automatic thermal curve is not simulated |
+| Tachometer-zero suppression, wrapping estimate protection, slew, >5% republication | Known EC behaviours, not simulated by this synchronous packet model |
+
+Host unit coverage exercises every integer duty from 0 through 101, an
+oversized duty, both fan ranges, invalid index/zero denominator, both clamp
+clip ends, zero/unset, and exact inverse/forward round trips including
+fractional-duty clamp 4501 through both packet layouts. None of the model's
+RPM values is a tachometer measurement.
+
+Retained run **`20261111T194757.684450Z`** exercises this implementation on
+2.155.11, with the default target and the same installed disk. It records
+`SET_STATE_RC=0`, `state=3/12 hottest=59.9C`, and
+`HWMON=/sys/class/hwmon/hwmon2 NAME=dgx_ec_fan FAN1=4500 FAN2=4500`.
+The corresponding monitor write trace is:
+
+```text
+EC-PACKET request=0x0000119400020501 lower-floor=0x0000000000001194 duty-source=inverse-estimate model-duty-percent=0x000000000005e7b8/0x0000000000001e3c,0x000000000005e7b8/0x0000000000002d5a model-rpm-estimate=0x0000000000001194,0x0000000000001194
+```
+
+The CLI's `automatic` command returns 0, status returns to `state=0/12`,
+and the same hwmon attributes read 1260/1890. The monitor records:
+
+```text
+EC-PACKET request=0x0000ffff00020501 lower-floor=0x000000000000ffff duty-source=unset-model-baseline model-duty-percent=0x000000000001a748/0x0000000000001e3c,0x0000000000027aec/0x0000000000002d5a model-rpm-estimate=0x00000000000004ec,0x0000000000000762
+```
+
+Thus the packet floor, explicit model duty, forward estimate, module
+readback, and hwmon publication agree in one retained guest capture.
+`fan-gap-evidence.json` indexes ANSI-stripped serial lines. This particular
+run used a signed but not-yet-trusted module; signing and trust are separate
+checks below.
+
 ## Default-target boot and native ACPI selection
 
 Retained run **`20261111T191435.858956Z`** boots the installed NVMe image with

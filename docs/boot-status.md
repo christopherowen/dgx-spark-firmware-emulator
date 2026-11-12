@@ -255,6 +255,14 @@ floor-device census is `FLOOR_DEVICES=0`; the CLI emits
 Native ownership predated `modprobe fan`; no extra module load was required.
 See [the exact evidence and limits](linux-under-the-profile.md#default-target-boot-and-native-acpi-selection).
 
+Packet run **`20261111T194757.684450Z`** records floor `0x1194`, rational
+duties `387000/7740` and `387000/11610`, and forward estimates/readbacks
+4500/4500, then restores `0xffff` and the labelled 14% baseline estimates
+1260/1890. The duty-to-estimate arithmetic and fan ranges are recovered;
+the inverse set-clamp duty, clipping and unset baseline are explicit model
+choices, not a calibrated EC control law or physical RPM measurement.
+See [the provenance boundary](linux-under-the-profile.md#duty-derived-packet-estimates-and-evidence-boundaries).
+
 ## Remaining platform limits and evidence boundaries
 
 These are separate from the permission-indirection correction and from a

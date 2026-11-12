@@ -46,8 +46,14 @@ class FanModelTests(unittest.TestCase):
         cls.packet = ctypes.CDLL(str(packet_library))
         cls.packet.fan_packet_request.argtypes = [ctypes.POINTER(ctypes.c_ulong)]
         cls.packet.fan_packet_request.restype = ctypes.c_int
-        cls.packet.fan_rpm.argtypes = [ctypes.c_uint]
-        cls.packet.fan_rpm.restype = ctypes.c_uint
+        cls.packet.fan_packet_rpm.argtypes = [ctypes.c_uint]
+        cls.packet.fan_packet_rpm.restype = ctypes.c_uint
+        cls.packet.fan_duty.argtypes = [ctypes.c_uint]
+        cls.packet.fan_duty.restype = ctypes.c_uint
+        cls.packet.fan_duty_denominator.argtypes = [ctypes.c_uint]
+        cls.packet.fan_duty_denominator.restype = ctypes.c_uint
+        cls.packet.fan_rpm_for_duty.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_uint]
+        cls.packet.fan_rpm_for_duty.restype = ctypes.c_uint
 
     @classmethod
     def tearDownClass(cls):
@@ -89,6 +95,15 @@ class FanModelTests(unittest.TestCase):
                 self.assertEqual(self.fan.fan_rpm_for_level(level), rpm)
         caps = self.packet_operation(1, out=10)
         self.assertEqual(caps[:10], bytes.fromhex("0100ec0428236207bc34"))
+        # Recovered duty-to-estimate arithmetic, not floor-to-duty calibration.
+        for index, (minimum, maximum) in enumerate(((1260, 9000), (1890, 13500))):
+            for duty in (*range(102), 0xFFFFFFFF):
+                with self.subTest(index=index, duty=duty):
+                    expected = (0 if duty < 14 else minimum +
+                                (min(duty, 100) - 14) * (maximum - minimum) // 86)
+                    self.assertEqual(self.packet.fan_rpm_for_duty(index, duty, 1), expected)
+        self.assertEqual(self.packet.fan_rpm_for_duty(2, 100, 1), 0)
+        self.assertEqual(self.packet.fan_rpm_for_duty(0, 100, 0), 0)
 
     def test_a_level_is_written_as_two_bytes_per_fan_and_reads_back(self):
         for level in (0, 50, 100):
@@ -102,8 +117,11 @@ class FanModelTests(unittest.TestCase):
             self.assertEqual(handled, 1)
             self.assertEqual(frame[4] & 0xFFFF, rpm, f"level {level} reads back {frame[4] & 0xFFFF}")
         for v2 in (False, True):
-            for floor, expected in ((4500, (4500, 4500)),
-                                    (13500, (9000, 13500)),
+            for floor, expected in ((1, (1260, 1890)), (1260, (1260, 1890)),
+                                    (1889, (1889, 1890)), (1890, (1890, 1890)),
+                                    (4500, (4500, 4500)), (4501, (4501, 4501)),
+                                    (9000, (9000, 9000)), (9001, (9000, 9001)),
+                                    (13500, (9000, 13500)), (0xFFFE, (9000, 13500)),
                                     (0, (0, 0)), (0xFFFF, (1260, 1890))):
                 with self.subTest(v2=v2, floor=floor):
                     self.packet_operation(5, floor.to_bytes(2, "little"), v2=v2)
@@ -112,7 +130,17 @@ class FanModelTests(unittest.TestCase):
                     telemetry = self.packet_operation(7, out=64, v2=v2)
                     self.assertEqual(tuple(int.from_bytes(telemetry[i:i + 2], "little")
                                            for i in (4, 6)), expected)
-                    self.assertEqual(tuple(self.packet.fan_rpm(i) for i in (0, 1)), expected)
+                    self.assertEqual(tuple(self.packet.fan_packet_rpm(i) for i in (0, 1)), expected)
+                    for i, estimate in enumerate(expected):
+                        numerator = self.packet.fan_duty(i)
+                        denominator = self.packet.fan_duty_denominator(i)
+                        self.assertEqual(self.packet.fan_rpm_for_duty(i, numerator, denominator),
+                                         estimate, "forward(inverse(clipped clamp)) is exact")
+                        if floor == 0:
+                            self.assertEqual(numerator, 0)
+                        else:
+                            self.assertGreaterEqual(numerator, 14 * denominator)
+                            self.assertLessEqual(numerator, 100 * denominator)
 
     def test_the_two_fans_are_independent(self):
         """Four sub-commands, two fans: a model that answered every write with one fan's state would

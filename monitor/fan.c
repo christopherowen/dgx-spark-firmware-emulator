@@ -60,9 +60,30 @@ static void complete(fan_u64 *r)
 #define PACKET_UUID0 0x86491dd2804db078UL
 #define PACKET_UUID1 0xc57a24607b46cb8aUL
 static unsigned lower_floor = 0xffff;
+static const unsigned minimum[2] = {1260, 1890}, maximum[2] = {9000, 13500};
+/* Rational percent preserves the inverse exactly, without rounding duty to an
+ * integer or inventing a physical PWM resolution. Denominator is the RPM span. */
+static unsigned duty[2] = {14 * (9000 - 1260), 14 * (13500 - 1890)};
+static unsigned packet_estimate[2] = {1260, 1890};
 static unsigned char packet_reply[65];
 
 unsigned fan_lower_floor(void) { return lower_floor; }
+unsigned fan_duty(unsigned index) { return index < 2 ? duty[index] : 0; }
+unsigned fan_packet_rpm(unsigned index) { return index < 2 ? packet_estimate[index] : 0; }
+unsigned fan_duty_denominator(unsigned index)
+{
+    return index < 2 ? maximum[index] - minimum[index] : 0;
+}
+
+unsigned fan_rpm_for_duty(unsigned index, unsigned numerator, unsigned denominator)
+{
+    if (index >= 2 || !denominator || (fan_u64)numerator < 14UL * denominator)
+        return 0;
+    if ((fan_u64)numerator > 100UL * denominator)
+        return maximum[index];
+    return minimum[index] + ((fan_u64)numerator - 14UL * denominator) *
+           (maximum[index] - minimum[index]) / (86UL * denominator);
+}
 
 static void put16(unsigned char *p, unsigned value)
 {
@@ -72,13 +93,18 @@ static void put16(unsigned char *p, unsigned value)
 
 static void packet_rpm(void)
 {
-    const unsigned minimum[] = {1260, 1890}, maximum[] = {9000, 13500};
     for (unsigned i = 0; i < 2; i++) {
-        /* A deterministic automatic policy, not a thermal/ramp/tachometer simulation. */
+        /* Inverse of the recovered published-estimate equation, not a recovered
+         * EC control law. Automatic has no simulated curve: minimum is a model
+         * baseline. Zero is stopped; other clamps clip to each fan's range. */
         unsigned demand = lower_floor == 0xffff ? minimum[i] : lower_floor;
-        if (lower_floor && demand < minimum[i])
+        if (demand && demand < minimum[i])
             demand = minimum[i];
-        rpm[i] = demand > maximum[i] ? maximum[i] : demand;
+        if (demand > maximum[i])
+            demand = maximum[i];
+        unsigned span = fan_duty_denominator(i);
+        duty[i] = demand ? 14 * span + (demand - minimum[i]) * 86 : 0;
+        packet_estimate[i] = fan_rpm_for_duty(i, duty[i], span);
     }
 }
 
@@ -129,9 +155,8 @@ int fan_packet_request(fan_u64 *r)
         lower_floor = value;
         packet_rpm();
     } else {
-        packet_rpm();
-        put16(packet_reply + 5, rpm[0]);
-        put16(packet_reply + 7, rpm[1]);
+        put16(packet_reply + 5, packet_estimate[0]);
+        put16(packet_reply + 7, packet_estimate[1]);
     }
     /* Synchronous model: submit succeeds and every subsequent poll is complete.
      * The cached reply remains available to preflight polls, like the relay ABI. */

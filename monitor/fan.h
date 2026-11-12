@@ -29,6 +29,12 @@ unsigned fan_rpm_for_level(unsigned level);
 #ifdef SPARK_FFA_EC
 int fan_packet_request(fan_u64 *r);
 unsigned fan_lower_floor(void);
+unsigned fan_packet_rpm(unsigned index);
+/* Applied duty as rational percent, not a claim about physical PWM resolution. */
+unsigned fan_duty(unsigned index);
+unsigned fan_duty_denominator(unsigned index);
+/* Recovered EC published estimate; duty is numerator/denominator percent. */
+unsigned fan_rpm_for_duty(unsigned index, unsigned numerator, unsigned denominator);
 #endif
 
 #endif

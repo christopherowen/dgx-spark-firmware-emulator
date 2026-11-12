@@ -820,10 +820,20 @@ void handle(u64 *r, u64 level) {
             hex(request);
             console_puts(" lower-floor=");
             hex(fan_lower_floor());
-            console_puts(" model-rpm=");
-            hex(fan_rpm(0));
+            console_puts(fan_lower_floor() == 0xffff ?
+                         " duty-source=unset-model-baseline" : " duty-source=inverse-estimate");
+            console_puts(" model-duty-percent=");
+            hex(fan_duty(0));
+            console_puts("/");
+            hex(fan_duty_denominator(0));
             console_puts(",");
-            hex(fan_rpm(1));
+            hex(fan_duty(1));
+            console_puts("/");
+            hex(fan_duty_denominator(1));
+            console_puts(" model-rpm-estimate=");
+            hex(fan_packet_rpm(0));
+            console_puts(",");
+            hex(fan_packet_rpm(1));
             console_puts("\n");
 #endif
             return;

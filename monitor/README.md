@@ -50,11 +50,21 @@ Both DIRECT_REQ2 and the legacy 64-bit direct request serve packet submit
 read lower clamp (`4`), write lower clamp (`5`), and telemetry (`7`). Invalid
 operation/length combinations return a nonzero submit status without changing
 the floor. Completion is synchronous, not a simulation of a physical mailbox.
-The unset floor is `0xffff`; the deterministic automatic demand is
-1260/1890 RPM, and a common floor saturates at 9000/13500 RPM respectively.
-Zero explicitly stops both modelled fans. The telemetry is computed state,
-not a tachometer, thermal policy, timing/ramp, or real-unit validation.
-`MONITOR_TRACE` logs discovery and each packet's floor and computed RPM.
+The unset floor is `0xffff`. Published RPM is an **estimate**, computed with the
+recovered EC equation `min + (duty - 14) * (max - min) / 86`, zero below 14%
+duty, bounded at 100%; CPU limits are 1260..9000 and rear limits 1890..13500.
+For a set floor the model applies that equation's inverse independently to each
+fan, clipping nonzero requests to its range. Zero explicitly stops both fans.
+Duty is rational percent, preserving `forward(inverse(clipped floor))` exactly
+without asserting an undocumented physical PWM resolution. This inverse is
+arithmetic, **not a recovered EC floor-to-duty controller**. For unset floors,
+14% duty and the minimum estimates are an explicit model baseline, not execution
+of the firmware's automatic thermal curve.
+`MONITOR_TRACE` logs the clamp, duty numerator/denominator in percent, estimate,
+and whether the duty came from inverse arithmetic or the unset model baseline.
+The equation and ranges come from recovered EC code; no physical tachometer
+value, thermal policy, ramp/slew, zero-tach suppression, or >5% republish timing
+is simulated. The OEM/AML fan path and its DSDT arithmetic are unchanged.
 
 The real MM firmware implements UEFI variables. `nor.c` supplies its peer flash
 interface using a NOR variable partition at flash offset `0x03000000` (or `0x0`
