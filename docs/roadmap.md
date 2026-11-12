@@ -52,6 +52,7 @@ second boot with persistent NOR state pass. See [boot status](boot-status.md).
 - [ ] Verify the reference SSPM/power_wrap interface against the Spark's ACPI.
 - [ ] Model mailbox ownership, doorbells, responses, and interrupt delivery.
 - [ ] Separate protocol stubs from actual remote firmware execution.
+      *Needs a plaintext image of the remote core's firmware, or a unit that exposes the mailbox.*
 - [ ] Identify the remote core, image, ISA and load contract before extending QEMU.
 - [x] Add independent subsystem regression scenarios for GPIO, UART IRQ,
       EINT software IRQs, and Root of Trust failure replies.

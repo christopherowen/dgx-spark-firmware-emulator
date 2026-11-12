@@ -55,6 +55,22 @@ class NorSizeTest(unittest.TestCase):
             self.assertEqual(regions(boot_arguments(size))["MMAP_NOR_BACKING"][1],
                              2 * size + 0x1000)
 
+    def test_the_described_top_follows_the_allocation_past_four_gib(self):
+        # The tag carries 64-bit bases and sizes, so the limit above 4 GiB is a policy, not a
+        # format one. The description must still start at RAM_BASE, stay contiguous and end
+        # exactly at the top it advertises.
+        for megabytes, top in ((2048, 0xC0000000), (3072, 0x100000000), (8192, 0x240000000)):
+            with self.subTest(megabytes=megabytes):
+                table = regions(boot_arguments(0x4000000, ram_top=top))
+                free_base, free_size, _flags = table["MMAP_FREE_BASE_3"]
+                self.assertEqual(free_base + free_size, top)
+                self.assertEqual(min(base for name, (base, _s, _f) in table.items()
+                                     if name.startswith("MMAP_")), 0x80000000)
+                ordered = sorted((base, base + size) for _n, (base, size, _f) in table.items()
+                                 if _n.startswith("MMAP_"))
+                for (start, end), (next_start, _next_end) in zip(ordered, ordered[1:]):
+                    self.assertLessEqual(end, next_start, "regions must not overlap")
+
     def test_the_cli_rejects_an_unsupported_size(self):
         import subprocess
         for value in ("0x800000", "0x1000000"):
@@ -111,6 +127,26 @@ class NorSizeTest(unittest.TestCase):
                 result = subprocess.run([sys.executable, "tools/boot_spark.py", "--smoke-test", *flags],
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 1)
+                self.assertNotIn("Traceback", result.stderr + result.stdout)
+
+    def test_an_explicit_size_is_checked_against_the_image_not_overwritten_by_it(self):
+        """The image's length is the part; naming another size is refused, not silently applied.
+
+        The layout has to be forced here. A 32 MiB file resolves to the store-only layout, which
+        `--flash-image` refuses for its own reason, and that refusal would hide whether the explicit
+        size was compared at all.
+        """
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            half = Path(directory) / "half.bin"
+            half.write_bytes(b"\xff" * 0x2000000)
+            for size in ("0x100000", "0x4000000"):
+                result = subprocess.run(
+                    [sys.executable, "tools/boot_spark.py", "--smoke-test", "--flash-layout", "whole",
+                     "--nor-size", size, "--flash-image", str(half)],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(f"not the modelled {int(size, 16):#x}", result.stderr)
                 self.assertNotIn("Traceback", result.stderr + result.stdout)
 
     def test_a_marker_only_pxe_run_never_claims_a_transfer(self):

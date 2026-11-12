@@ -66,6 +66,16 @@ interrupt wiring, and capsule payload boundaries must come from evidence.
 
 ## What this machine models, and what it does not
 
+Two program models exist for a page write, and a receipt names the one that produced it:
+`page-before-delay-v1` commits the request and then spends the page budget, while
+`linear-request-byte-v1` spreads the budget over the bytes the pulse covers so a reset can leave a
+prefix written. The second is an approximation of how the die settles, not a measurement of it.
+
+The loader tag can describe RAM above 4 GiB — its region bases and sizes are 64-bit — but that is
+opt-in (`--extended-ram`) because the machine's high MMIO windows are not modelled. What a host can
+actually allocate is a separate limit: the measurements in this repository stop at 3 GiB, and a
+larger allocation has not been exercised here.
+
 The machine boots the board's own firmware images and reproduces the board's flash geometry: a 64 MiB
 part with the variable store at `0x0` and the code volume at `0x2000000`, programmed in 256-byte
 pages and erased in 4 KiB sectors, with the GWDT at `0x1c041000` resetting a stalled boot. Those are
@@ -87,7 +97,10 @@ next boot executes.
 
 It is not a GB10. The GPIO/EINT banks, the UART and the RTL8168 model are approximations for the
 paths they are used on; there is no SPI controller in the normal world (the board's belongs to the
-Flash Service partition), one CPU instead of twenty, and one gigabyte of DRAM instead of a board-class memory — the profile aliases PCI BAR space over the lowest gigabyte, and the loader tag describes the rest of the allocation, so `--memory` beyond 2 GiB adds usable RAM rather than hidden RAM. Each
+Flash Service partition), one running CPU by default instead of twenty (a second can be modelled,
+parked until the monitor's `CPU_ON` releases it), and 2 GiB of DRAM by default instead of board-class memory — the
+profile aliases PCI BAR space over the lowest gigabyte, and the loader tag describes the rest of the
+allocation, so `--memory` beyond that adds usable RAM rather than hidden RAM. Each
 of those is named below with its reason and what would close it, so a result taken here can be
 attributed to the firmware rather than to the model:
 
@@ -95,9 +108,9 @@ attributed to the firmware rather than to the model:
 | --- | --- | --- |
 | Where a power loss lands inside a page | the model commits a page and then spends its time; a torn page is a property of the silicon | a part on a bench with a switchable supply |
 | The part's real erase and program times | `--board` applies datasheet-typical values (400 µs a page, 40 ms a sector); the board's own part has not been timed | a metered part, or a timing run on a unit |
-| An eSPI peripheral | the firmware's eSPI path is not touched by any result this lab has taken | a test that depends on eSPI |
-| An NVMe device | no measured result depends on the firmware finding a block device | a test that enumerates storage |
-| Board-class RAM and 20 CPUs | the profile enforces one CPU, and the loader tag stops describing memory at `0x100000000`, so at most 2 GiB is usable | a machine profile with more CPUs, the PSCI work that follows it, and a host with the memory |
+| An eSPI bus or controller | the **service behind it is modelled where it is reachable**: `monitor/fan.c` answers `SMC 0xC400008D` on endpoint `0x8003`, and that is how the fan results are taken. The eSPI link itself — the peripheral's registers, its cycles on the wire — is not modelled, and no result here depends on it | a test that needs the eSPI link rather than the service |
+| A board-faithful storage topology | emulated NVMe controllers support installer restoration and installed-kernel handoff, not the board's complete storage topology | measured device and stream mappings |
+| Board-class RAM and 20 CPUs (one or two are modelled; `CPU_ON` can release the parked secondary) | the vendor platform description still activates one CPU, and the loader tag stops describing memory at `0x100000000`, so at most 2 GiB is usable | a matching MADT and loader tag, a profile with more CPUs, and a host with the memory |
 
 The tools inspect local artifacts and run the emulator. The separate,
 explicitly invoked hardware collector performs read-only SSH inventory reads.

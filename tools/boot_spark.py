@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.build_monitor import NOR_SIZES, build_monitor
 from tools.download_firmware import require_ignored_untracked
+from tools.console import type_line
 from tools.dxe_protocols import inspect_protocols
 from tools.handoff import boot_arguments
 from tools.prepare_mm import MM_SHA256, prepare_mm
@@ -108,6 +109,34 @@ def usable_megabytes(allocated_mb: int) -> int:
     return max(0, (top - RAM_BASE) // (1024 * 1024))
 
 
+WHOLE_DEVICE_SIZE = 0x4000000
+
+
+def resolve_flash_layout(state_size, layout="auto", board=False, code_offset=None,
+                         nor_size=None):
+    """Decide which flash layout a run uses, from the input alone.
+
+    `auto` reads the state file's own size: a whole device is 64 MiB and carries both
+    volumes, so a 32 MiB file can only be a store. Nothing is rebound by a default —
+    a file keeps meaning what its size says it is — while a whole-device image gets
+    the board's offsets without being asked.
+
+    Returns `(layout, nor_size, nor_offset, code_offset)`.
+    """
+    if layout not in ("auto", "whole", "store"):
+        raise ValueError(f"unknown flash layout: {layout}")
+    # auto: an existing file keeps the meaning its size gives it, and an absent state starts as the
+    # board's device — a new run should model the part, not the old store window.
+    whole = (layout == "whole"
+             or (layout == "auto" and (state_size == WHOLE_DEVICE_SIZE or state_size is None)))
+    if board and layout == "store":
+        raise ValueError("--board needs the whole-device layout; drop --flash-layout store")
+    if whole:
+        return ("whole", nor_size or WHOLE_DEVICE_SIZE, 0,
+                0x2000000 if code_offset is None else code_offset)
+    return ("store", nor_size, 0x3000000, None)
+
+
 def apply_board_preset(args):
     """Fill in `--board`'s defaults, keeping anything the caller set explicitly.
 
@@ -129,11 +158,62 @@ def apply_board_preset(args):
         args.erase_us = 40000
 
 
+def nvme_arguments(images, path_for=local_path):
+    """The QEMU arguments for the NVMe namespaces, and one receipt entry per namespace.
+
+    Each image is its own PCI function on bus 1 (slot 2, then 3, …) and is snapshotted, so a run can
+    never write the caller's file. Two namespaces are what installing the recovery system needs: the
+    media that carries the kernel, and the disk the installer partitions.
+    """
+    arguments = []
+    entries = []
+    for index, image in enumerate(Path(image) for image in (images or [])):
+        if index >= 4:
+            raise ValueError("at most four NVMe namespaces are modelled (one PCI function each)")
+        if not image.is_file():
+            raise ValueError(f"NVMe image not found: {image}")
+        arguments += ["-drive",
+                      f"if=none,id=nvme{index},file={path_for(image)},format=raw,snapshot=on",
+                      "-device", f"nvme,bus=pcie.0,addr={2 + index},drive=nvme{index},"
+                                 f"serial=SPARKLAB{index + 1:02d}"]
+        # Streamed, not read whole: a target disk is gigabytes and reading it into memory is how a
+        # boot becomes an OOM kill instead of a run.
+        digest = hashlib.sha256()
+        with image.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        entries.append({"path": str(image),
+                        "sha256": digest.hexdigest(),
+                        "size": image.stat().st_size,
+                        "pci": f"synthetic: segment 0 bus 1 slot {2 + index}"})
+    return arguments, entries
+
+
+def die_with_parent():
+    """Have the child take SIGKILL when this process dies.
+
+    A boot that is killed -- by a job runner, by a timeout, by hand -- otherwise leaves QEMU running:
+    it keeps the state file locked, so every later launch fails with `[Errno 11]` from the lock and
+    silently reports nothing, and it keeps burning a core while the serial logs it writes belong to a
+    run nobody is watching any more.
+    """
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(1, 9, 0, 0, 0)  # PR_SET_PDEATHSIG, SIGKILL
+    except (OSError, AttributeError):
+        pass
+
 def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=None, pxe_image=None,
         pxe_marker=None, rtc_base=None, seed=None, firmware_version=DEFAULT_VERSION,
         memory=None, smp=None, nor_size=NOR_STATE_SIZE, gdb_port=None,
         allow_marker_only=False, nor_offset=0x3000000, code_offset=None, trace=False,
-        accept_mmap_notify=False, gwdt_timeout_ms=None, stop_after_boots=None):
+        accept_mmap_notify=False, gwdt_timeout_ms=None, stop_after_boots=None,
+        program_model=None, code_offset_source="not-sliced", trace_pc=None, trace_limit=0, trace_sample=0,
+        trace_start=0, trace_exceptions=False,
+        extended_ram=False, nvme_images=None, qmp_path=None, console_script=None,
+        console_after=0.0, console_delay=0.03, usb_image=None, rot_functional=False,
+        no_setup_escape=False, ffa_ec=False):
     qemu = shutil.which(qemu)
     if qemu is None:
         raise ValueError("build the Spark QEMU profile first: python3 tools/build_qemu.py")
@@ -142,10 +222,20 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
     package = prepare_mm(firmware_version)
     # Both knobs are decided before the monitor is built because they are compile-time: the RAM top
     # the tag will advertise, and the clock the firmware's own RTC service reports.
-    ram_top = min(0x40000000 + parse_megabytes(memory or "2G") * 1024 * 1024, 0x100000000)
+    # The tag carries 64-bit region bases and sizes, so describing RAM above 4 GiB is a decision,
+    # not a format limit. It stays opt-in: the machine's high MMIO windows are not modelled here, so
+    # a description that reaches past 4 GiB is only honest when the caller says so.
+    described = 0x40000000 + parse_megabytes(memory or "2G") * 1024 * 1024
+    ram_top = described if extended_ram else min(described, 0x100000000)
+    # A whole-device run models the part's pulse by default, because that is the layout whose
+    # results can talk about power loss; the store-only layout keeps the older page-at-once model.
+    if program_model is None:
+        program_model = "byte" if nor_offset == 0 else "page"
     monitor = build_monitor(policy, write_us, erase_us, nor_size, nor_offset, trace,
                             accept_mmap_notify, gwdt_timeout_ms, ram_top=ram_top,
                             rtc_base=epoch_seconds(rtc_base), code_offset=code_offset,
+                            program_model=program_model, cpus=smp or 1,
+                            ffa_ec=ffa_ec,
                             code_size=(prepared_directory(firmware_version) / "uefi.fd").stat().st_size
                             if code_offset is not None else None)
     prepared_firmware = prepared_directory(firmware_version) / "uefi.fd"
@@ -166,8 +256,19 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if not state.exists():
+            # A fresh state is created at the path the caller asked for, under the lock, and after
+            # the release is prepared (run() calls prepare_mm() before this). A whole-device state
+            # gets the erased store *and* the release's code volume; a store gets erased bytes.
             with state.open("xb") as output:
-                output.write(b"\xff" * nor_size)
+                if nor_offset == 0:
+                    from tools.board_image import CODE_SIZE, fresh_image
+                    code = (prepared_directory(firmware_version) / "uefi.fd").read_bytes()
+                    if len(code) > CODE_SIZE:
+                        raise ValueError(f"the prepared release is {len(code):#x} bytes; the code "
+                                         f"volume is {CODE_SIZE:#x}")
+                    output.write(fresh_image(code))
+                else:
+                    output.write(b"\xff" * nor_size)
             state.chmod(0o600)
         if state.stat().st_size != nor_size:
             raise ValueError("NOR state must be exactly the modelled flash size; preserve it and select another state file")
@@ -190,7 +291,16 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
                           nor_size=nor_size, gdb_port=gdb_port, trace=trace,
                           accept_mmap_notify=accept_mmap_notify, gwdt_timeout_ms=gwdt_timeout_ms,
                           nor_offset=nor_offset, code_offset=code_offset,
-                          stop_after_boots=stop_after_boots,
+                          stop_after_boots=stop_after_boots, program_model=program_model,
+                          code_offset_source=code_offset_source, qmp_path=qmp_path,
+                          console_script=console_script, console_after=console_after,
+                          rot_functional=rot_functional, no_setup_escape=no_setup_escape,
+                          ffa_ec=ffa_ec,
+                          console_delay=console_delay, usb_image=usb_image,
+                          trace_pc=trace_pc, trace_limit=trace_limit, trace_sample=trace_sample,
+                          trace_start=trace_start, trace_exceptions=trace_exceptions,
+                          extended_ram=extended_ram,
+                          nvme_images=nvme_images,
                           allow_marker_only=allow_marker_only, firmware_path=firmware_path)
 
 
@@ -200,7 +310,12 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                write_us=None, policy="armed", nor_size=NOR_STATE_SIZE, gdb_port=None,
                trace=False, accept_mmap_notify=False, gwdt_timeout_ms=None,
                nor_offset=0x3000000, code_offset=None, stop_after_boots=None,
-               allow_marker_only=False, firmware_path=None):
+               allow_marker_only=False, firmware_path=None, program_model=None,
+               code_offset_source="not-sliced", trace_pc=None, trace_limit=0, trace_sample=0,
+               trace_start=0, trace_exceptions=False,
+               extended_ram=False, nvme_images=None, qmp_path=None, console_script=None,
+               console_after=0.0, console_delay=0.03, usb_image=None, rot_functional=False,
+               no_setup_escape=False, ffa_ec=False):
     firmware_directory = prepared_directory(firmware_version)
     if firmware_path is None:
         firmware_path = firmware_directory / "uefi.fd"
@@ -256,15 +371,22 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
         ExitStack() as resources,
         local_path(directory / "serial.log").open("wb") as log,
     ):
-        command = [qemu, "-M", "virt,spark-fw-lab=on,spark-rot-error-replies=on,"
-                   "gic-version=3,virtualization=on,secure=on", "-accel", "tcg",
+        # Back the GIC ITS at 0x06840000, where the guest's MADT declares it.
+        # NVMe probing deferred in the recovery boot but completed at its timeout; the capture
+        # does not establish missing ITS as the cause or a permanent wait. No supplier links
+        # were present, and the SMMU was ruled out as the dependency.
+        rot = "spark-rot-functional=on" if rot_functional else "spark-rot-error-replies=on"
+        command = [qemu, "-M", "virt,spark-fw-lab=on," + rot + ","
+                   "gic-version=3,virtualization=on,secure=on,its=on", "-accel", "tcg",
                    "-cpu", "max,sve=off,sme=off,pauth=off",
                    "-m", memory or "2G", "-smp", str(smp or 1),
                    "-nodefaults", "-display", "none", "-monitor", "none", "-serial", "stdio",
-                   "-qmp", f"unix:{temporary}/qmp,server=on,wait=off",
+                   "-qmp", (f"unix:{qmp_path},server=on,wait=off" if qmp_path
+                            else f"unix:{temporary}/qmp,server=on,wait=off"),
                    # cpu_reset is what makes a reboot explainable: the watchdog, which is
                    # what resets the board-faithful image, logs its expiry there.
-                   "-d", "guest_errors,unimp,cpu_reset", "-D",
+                   "-d", ("guest_errors,unimp,cpu_reset,int" if trace_exceptions
+                          else "guest_errors,unimp,cpu_reset"), "-D",
                    str(local_path(directory / "qemu.log"))]
         # Diagnostic only: hold the CPU at reset and expose a GDB stub so a driver can
         # break on a firmware address while the guest runs. Never used for receipts.
@@ -285,19 +407,35 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
         # MiB, not a rounded gigabyte: 2100 MiB of allocation is 1076 MiB usable, and "1G" would
         # understate what the guest was told.
         record["memory_usable"] = f"{usable_megabytes(allocated)}M"
+        record["ram_description"] = "extended" if extended_ram else "capped-at-4g"
         record["erase_latency_us"] = erase_us
         record["write_latency_us"] = write_us
         record["smp"] = smp or 1
+        record["secondary_cpus"] = ("parked until started; no PSCI implementation in the monitor"
+                                    if (smp or 1) > 1 else "none")
         # Every knob that changes what the guest sees or what the model does, recorded so a result
         # is reproducible from its own record: the flash offset decides whole-device vs partition-only,
         # the code offset decides which bytes the boot image was sliced from, and the diagnostic
         # switches change what the monitor prints or answers.
         record["nor_offset"] = nor_offset
+        # Which layout this run used, and which receipt schema it is written in: a record from
+        # before these fields existed was taken on the store-only layout.
+        record["receipt_schema"] = 2
+        # Which policy resolved the layout: 1 read the file's size only, 2 also starts an absent
+        # state as the board's device. A receipt from schema 1 says the older thing.
+        record["layout_policy"] = 2
+        record["flash_layout"] = "whole" if nor_offset == 0 else "store"
+        record["code_offset_source"] = code_offset_source
+        # A version, not a boolean: a result about a partly written page must say how the
+        # partiality was modelled.
+        record["program_model"] = ("linear-request-byte-v1" if program_model == "byte"
+                                   else "page-before-delay-v1")
         if stop_after_boots is not None:
             record["stop_after_boots"] = stop_after_boots
         record["code_offset"] = code_offset
         record["flash_trace"] = bool(trace)
         record["accept_mmap_notify"] = bool(accept_mmap_notify)
+        record["ffa_ec"] = bool(ffa_ec)
         if gwdt_timeout_ms:
             record["gwdt_timeout_ms"] = gwdt_timeout_ms
         if mode is RunMode.PXE_TEST:
@@ -307,21 +445,60 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                         str(local_path(directory / "packets.pcap"))]
         else:
             command += ["-nic", "none"]
+        arguments, entries = nvme_arguments(nvme_images)
+        command += arguments
+        if entries:
+            record.setdefault("nvme_images", []).extend(entries)
+            record["nvme_write_policy"] = "snapshot-per-run; no source file is written"
+            record["nvme_image"] = entries[0]["path"]   # kept: one image was the only shape before
+        if trace_pc or trace_sample:
+            from tools.build_plugin import build as build_plugin
+            plugin = build_plugin()
+            options = f"pc={trace_pc:#x}" if trace_pc is not None else ""
+            if trace_sample:
+                options += ("," if options else "") + f"sample={int(trace_sample)}"
+            if trace_start:
+                options += ("," if options else "") + f"start={int(trace_start)}"
+            command += ["-plugin", f"{plugin},{options},limit={int(trace_limit)}"]
+            record["trace_pc"] = trace_pc
+            if trace_sample:
+                record["trace_sample"] = trace_sample
+            record["trace_limit"] = int(trace_limit)
+            record["plugin_sha256"] = hashlib.sha256(plugin.read_bytes()).hexdigest()
         for image, address, cpu in ((monitor, 0x80020000, True), (package, 0x93a40000, False),
                                     (firmware_path, 0x80800000, False),
                                     (handoff, 0x80010000, False), (state, 0xa0000000, False)):
             command += ["-device", f"loader,file={image},addr={address:#x},force-raw=on" +
                         (",cpu-num=0" if cpu else "")]
+        if monitor and (smp or 1) > 1:
+            # The secondary has to enter the monitor to park; without this it starts at QEMU's reset
+            # vector, which holds nothing, and executes zeros. Parking is what gives CPU_ON something
+            # to release later.
+            command += ["-device", f"loader,file={monitor},addr=0x80020000,force-raw=on,cpu-num=1"]
+        if usb_image is not None:
+            usb_image = local_path(usb_image)
+            command += ["-drive", f"if=none,id=usb0,file={usb_image},format=raw,snapshot=on",
+                        "-device", "usb-storage,drive=usb0,serial=SPARKKEY"]
+            record["usb_image"] = {"path": str(usb_image),
+                                   "sha256": hashlib.sha256(usb_image.read_bytes()).hexdigest()}
         record["command"] = command
+        record["console_input_transport"] = "serial-stdin"
         try:
             process = resources.enter_context(subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    preexec_fn=die_with_parent,
                 stderr=subprocess.STDOUT, bufsize=0))
-            qmp = resources.enter_context(Qmp(connect_unix(Path(temporary) / "qmp", process)))
+            qmp = resources.enter_context(Qmp(connect_unix(
+                Path(qmp_path) if qmp_path else Path(temporary) / "qmp", process)))
             selector = resources.enter_context(selectors.DefaultSelector())
             selector.register(process.stdout, selectors.EVENT_READ, "uart")
             if interactive:
                 selector.register(sys.stdin, selectors.EVENT_READ, "keyboard")
+            # A console script is typed once, `console_after` seconds in: a guest with no shell
+            # prompt to wait for (a menuless installer, or init=/bin/sh) needs a deadline, not a
+            # guess about when it is ready.
+            script = (list(console_script.read_text().splitlines()) if console_script else [])
+            script_due = time.monotonic() + console_after if script else None
             deadline = time.monotonic() + timeout
             escape_sent = False
             navigate_at = stop_at = None
@@ -361,6 +538,16 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                         process.stdin.write(b"\x1b[C")
                         navigation_offset = len(capture)
                         navigate_at = None
+                    if script_due is not None and now >= script_due:
+                        # Pace bytes through the same serial stdin used for ESC and navigation.
+                        # QMP send-key targets keyboard handlers, not this profile's UART.
+                        for line in script:
+                            type_line(process.stdin, line, console_delay)
+                            time.sleep(console_delay * 10)
+                        record["console_script"] = {"lines": len(script),
+                                                   "typed_at": round(now, 3),
+                                                   "transport": "serial-stdin"}
+                        script_due = None
                     for key, _ in selector.select(.05):
                         if key.data == "keyboard":
                             data = os.read(sys.stdin.fileno(), 4096)
@@ -409,7 +596,11 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
 
                         if b"Synchronous Exception" in capture or b"MON: abort" in capture:
                             raise RuntimeError("firmware exception; see this run's local serial.log")
-                        if mode is not RunMode.PXE_TEST and not escape_sent and b"Press <DEL>" in capture:
+                        # ESC is "enter Setup" on this firmware, so sending it dismisses nothing:
+                        # it diverts a disk boot into the setup UI. --no-setup-escape exists to
+                        # separate our own keypress from the firmware's behaviour.
+                        if (not no_setup_escape and mode is not RunMode.PXE_TEST
+                                and not escape_sent and b"Press <DEL>" in capture):
                             process.stdin.write(b"\x1b")
                             escape_sent = True
                         setup_at = marker_at(b"Aptio Setup - AMI")
@@ -515,11 +706,30 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                     marker_only = True
                 if pxe_image is not None:
                     record["pxe_network_note"] = "delivered image supplied by the caller"
+            tables = re.findall(r"^ACPI (\w{4}) ([0-9a-f]{8}) ([0-9a-f]{12})$",
+                                capture.decode("utf-8", "replace"), re.M)
+            if tables:
+                record["acpi_tables"] = [
+                    {"signature": signature, "length": int(length, 16), "address": int(address, 16)}
+                    for signature, length, address in tables]
+            if record.get("acpi_tables"):
+                # The guest printed where its ACPI tables live; dump them while it is still stopped.
+                # They stay in this run's directory (ignored), never in the repository.
+                captured = []
+                for entry in record["acpi_tables"]:
+                    target = local_path(directory / f"acpi-{entry['signature']}-{entry['address']:#x}.bin")
+                    qmp.request("pmemsave", {"val": entry["address"], "size": entry["length"],
+                                             "filename": str(target)})
+                    entry["sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+                    captured.append(target.name)
+                record["acpi_files"] = captured
             snapshot = local_path(directory / "dxe-memory.bin")
             qmp.request("pmemsave", {"val": 0x84000000, "size": 0x4000000,
                                      "filename": str(snapshot)})
-            record["architectural_protocols"] = inspect_protocols(snapshot.read_bytes(), 0x84000000)
-            if not all(p["present"] for p in record["architectural_protocols"]["protocols"]):
+            record.update(protocol_table_inspection(
+                capture, lambda: inspect_protocols(snapshot.read_bytes(), 0x84000000)))
+            table = record.get("architectural_protocols")
+            if table and not all(entry["present"] for entry in table["protocols"]):
                 raise RuntimeError("setup reached with missing architectural protocols")
             qmp.request("pmemsave", {"val": nor_live_base(nor_size), "size": nor_size,
                                      "filename": str(partial)})
@@ -572,6 +782,52 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                 record["flash_allowed"] = allowed
                 record["flash_denied"] = denied
                 record["smc_calls"] = capture.count(b"SMC fid=")
+            if trace_pc:
+                # A capped observation is censored evidence: record the counts so a reader can tell
+                # a complete trace from a truncated one without the command line.
+                text = capture.decode("utf-8", "replace")
+                summary = re.findall(r"TRACE summary pc=0x[0-9a-f]+ hits=(\d+) printed=(\d+) "
+                                     r"limit=(\d+) censored=(\d)((?: cpu\d+=\d+)*)", text)
+                checkpoints = re.findall(r"TRACE checkpoint hits=(\d+) printed=(\d+)", text)
+                capped = re.findall(r"TRACE capped hits=(\d+) printed=(\d+) limit=(\d+)", text)
+                if summary:
+                    hits, printed, _limit, censored, per_cpu = summary[-1]
+                    record["trace_hits"] = int(hits)
+                    record["trace_printed"] = int(printed)
+                    record["trace_censored"] = bool(int(censored))
+                    record["trace_source"] = "summary"
+                    if per_cpu.strip():
+                        record["trace_per_cpu"] = {
+                            key: int(value) for key, value in
+                            re.findall(r"(cpu\d+)=(\d+)", per_cpu)}
+                elif capped:
+                    hits, printed, _limit = capped[-1]
+                    record["trace_hits"] = int(hits)
+                    record["trace_printed"] = int(printed)
+                    record["trace_censored"] = True
+                    record["trace_source"] = "cap line; the guest did not shut down cleanly"
+                elif checkpoints:
+                    hits, printed = checkpoints[-1]
+                    record["trace_hits"] = int(hits)
+                    record["trace_printed"] = int(printed)
+                    record["trace_censored"] = True
+                    record["trace_source"] = "last checkpoint; the guest did not shut down cleanly"
+                else:
+                    # A run cut off before its summary or cap still leaves hit lines behind; they are
+                    # the only count there is, and the observation is censored by definition.
+                    hits = re.findall(r"TRACE hit \d+ cpu=(\d+)", text)
+                    if hits:
+                        record["trace_hits"] = len(hits)
+                        record["trace_printed"] = len(hits)
+                        record["trace_censored"] = True
+                        record["trace_source"] = "hit lines; the guest did not shut down cleanly"
+                        per_cpu = {}
+                        for cpu in hits:
+                            key = f"cpu{cpu}"
+                            per_cpu[key] = per_cpu.get(key, 0) + 1
+                        record["trace_per_cpu"] = per_cpu
+                    else:
+                        record["trace_error"] = "no plugin output; the trace is unmeasured"
             # A reboot is not a cause. The cpu_reset category names one, and the watchdog is what
             # resets the board-faithful image, so record it rather than leaving it in a log.
             log = local_path(directory / "qemu.log")
@@ -642,6 +898,39 @@ def final_cycle_verdict(mode, capture, navigation_offset, marker):
     return verified, "setup", detail
 
 
+# What a payload prints after it has taken the machine over. The DXE core's own image, including the
+# architectural-protocol table the inspection looks for, is boot-services memory: once the payload
+# calls ExitBootServices that memory is the guest's to reuse, so a table that is missing afterwards
+# says nothing about the firmware. Measured on 245 stored runs: the ten runs whose table could not be
+# found all reached `Run /init as init process`, while four runs with the same marker still found it
+# intact — survival of the region is luck, which is why a *found* table stays evidence and a missing
+# one is not.
+HANDOFF_MARKERS = (b"EFI stub:", b"Run /init as init process")
+
+
+def guest_left_boot_services(capture):
+    """The payload's own evidence that firmware memory has stopped being the firmware's."""
+    return [marker.decode() for marker in HANDOFF_MARKERS if marker in capture]
+
+
+def protocol_table_inspection(capture, inspect):
+    """The table an inspection found, or why this run cannot observe one.
+
+    `inspect` is called only as the record's evidence, and a failure is re-raised unless the payload
+    demonstrably left boot services. The strict reading is kept wherever it can be taken: a run that
+    still holds the table is checked exactly as before.
+    """
+    try:
+        return {"architectural_protocols": inspect()}
+    except ValueError as error:
+        evidence = guest_left_boot_services(capture)
+        if "found 0" not in str(error) or not evidence:
+            raise
+        return {"architectural_protocols_source":
+                f"not observable: {error}; the payload left boot services "
+                f"({', '.join(evidence)}), so the DXE image is guest memory again"}
+
+
 def nor_live_base(nor_size: int) -> int:
     """Where the guest's live flash lives: one seed window and one state page above the loader blob.
 
@@ -674,15 +963,48 @@ def parse_megabytes(text: str) -> int:
     return int(value * units.get(suffix, 1))
 
 
-def available_megabytes():
-    try:
-        with open("/proc/meminfo", encoding="ascii") as handle:
-            for line in handle:
-                if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) // 1024
-    except OSError:
-        return None
-    return None
+def available_megabytes(cgroup_root=Path("/sys/fs/cgroup"), host_megabytes=None):
+    """Memory a boot may use: host `MemAvailable`, or the cgroup's headroom if that is smaller.
+
+    Reading only `/proc/meminfo` is not enough. Inside a container the kernel's OOM killer applies the
+    cgroup's own limit, and a guest that the host could fit is killed with SIGKILL the moment the
+    group reaches it — which reads as a mysterious exit 137, not as a refusal. This host is a cgroup
+    with a 16 GiB cap, and a 3 GiB guest was killed that way with 7.6 GiB reported free.
+
+    `host_megabytes` replaces the `/proc/meminfo` reading. The rule this function implements is
+    "the smaller of the two", and the host's own number changes between any two calls, so a test that
+    wants to check the rule supplies it instead of reading it twice and comparing.
+    """
+    host = host_megabytes
+    if host is None:
+        try:
+            with open("/proc/meminfo", encoding="ascii") as handle:
+                for line in handle:
+                    if line.startswith("MemAvailable:"):
+                        host = int(line.split()[1]) // 1024
+                        break
+        except OSError:
+            host = None
+
+    limit = usage = None
+    # cgroup v2 first, then v1, both at the root the caller named so a test can point elsewhere.
+    for limit_name, usage_name in (("memory.max", "memory.current"),
+                                   ("memory/memory.limit_in_bytes", "memory/memory.usage_in_bytes")):
+        try:
+            limit_text = (cgroup_root / limit_name).read_text().strip()
+            usage_text = (cgroup_root / usage_name).read_text().strip()
+        except OSError:
+            continue
+        if limit_text == "max":
+            continue
+        limit = int(limit_text) // (1024 * 1024)
+        usage = int(usage_text) // (1024 * 1024)
+        break
+    # A limit of ~2**63 means "unlimited" on a v1 hierarchy.
+    if limit is not None and limit < 1 << 40:
+        headroom = max(limit - (usage or 0), 0)
+        return headroom if host is None else min(host, headroom)
+    return host
 
 
 def stage_foreign(source: Path) -> Path:
@@ -740,12 +1062,41 @@ def main():
     parser.add_argument("--pxe-image", type=Path,
                         help="serve this EFI application over the PXE path instead of the "
                              "built-in probe; requires --pxe-test and --pxe-marker")
+    parser.add_argument("--console-script", type=Path, metavar="FILE",
+                        help="type this file's lines into the guest console once --console-after "
+                             "seconds have passed, one line per Enter; a menuless installer or a "
+                             "shell still has to be told what to do")
+    parser.add_argument("--console-after", type=float, default=0.0, metavar="SECONDS",
+                        help="when to start typing the console script (default: as soon as the "
+                             "guest starts)")
+    parser.add_argument("--usb-image", type=Path, metavar="PATH",
+                        help="attach this image as a USB key: the recovery media is a USB key on "
+                             "hardware and the installer looks for /dev/sd* with fastos-release.txt")
+    parser.add_argument("--no-setup-escape", action="store_true",
+                        help="do not send ESC at the firmware's boot prompt: on AMI that key enters "
+                             "Setup rather than dismissing the prompt")
+    parser.add_argument("--ffa-ec", action="store_true",
+                        help="publish the experimental Linux FF-A EC packet service")
+    parser.add_argument("--rot-functional", action="store_true",
+                        help="answer the ROT services the firmware calls with their success status "
+                             "instead of refusing them; a functional model that authenticates nothing")
+    parser.add_argument("--qmp-alive", type=Path, metavar="PATH",
+                        help="put the QMP socket at PATH for emulator inspection while the run "
+                             "continues; QMP keyboard events do not type into the serial console")
     parser.add_argument("--gdb", type=int, metavar="PORT",
                         help="diagnostic: hold the CPU at reset and expose a GDB stub on PORT")
     parser.add_argument("--board", action="store_true",
                         help="board-faithful defaults: a whole-device flash image of the board's "
                              "64 MiB part, the latch armed, and the boot image taken from the "
                              "image at --code-offset (default 0x2000000)")
+    parser.add_argument("--flash-layout", choices=("auto", "whole", "store"), default="auto",
+                        help="which layout the state is: auto reads its size (64 MiB is the board's "
+                             "whole device, 32 MiB a store), whole is offset 0 with the code volume "
+                             "at 0x2000000, store is the legacy 0x03000000 window")
+    parser.add_argument("--program-model", choices=("page", "byte"), default=None,
+                        help="how a program pulse is modelled: page commits the request then spends "
+                             "the page budget, byte spreads the budget so a reset leaves a prefix "
+                             "written. Defaults to byte for the whole-device layout, page for a store")
     parser.add_argument("--flash-image", type=Path,
                         help="boot from a whole-device flash image: the boot image is read "
                              "from it and the guest sees the same bytes as flash, so a write "
@@ -766,13 +1117,35 @@ def main():
                         help="pre-arm the GWDT with this timeout in the monitor, as a BL31 would")
     parser.add_argument("--accept-mmap-notify", action="store_true",
                         help="experimental: answer 0xc4000122 with success instead of NOT_SUPPORTED")
+    parser.add_argument("--nvme-image", type=Path, metavar="PATH", action="append",
+                        help="attach a raw NVMe namespace from this image; repeat for a second "
+                             "namespace (media and target disk). The boot writes to a per-run "
+                             "snapshot, never to the file")
+    parser.add_argument("--extended-ram", action="store_true",
+                        help="describe RAM up to the allocation even past 4 GiB; off by default "
+                             "because the machine's high MMIO windows are not modelled")
+    parser.add_argument("--trace-pc", type=lambda v: int(v, 0), metavar="ADDRESS",
+                        help="diagnostic: log every execution of this guest address with the TCG "
+                             "plugin, and record the counts; a capped trace is marked censored")
+    parser.add_argument("--trace-sample", type=int, default=0, metavar="N",
+                        help="sample the address of every N-th translated basic block executed; "
+                             "answers 'where is the guest running' for a boot that stops printing")
+    parser.add_argument("--trace-limit", type=int, default=0, metavar="N",
+                        help="stop logging after N hits (0, the default, means no limit)")
+    parser.add_argument("--trace-exceptions", action="store_true",
+                        help="add QEMU's 'int' log: every exception and interrupt with the EL that "
+                             "takes it, which is how a guest that never wakes is diagnosed")
+    parser.add_argument("--trace-start", type=int, default=0, metavar="N",
+                        help="do not sample before the N-th executed block: a sampler that runs from "
+                             "reset otherwise spends its whole limit on the firmware phase")
     parser.add_argument("--flash-trace", action="store_true",
                         help="build a monitor that logs each answered flash request to the console")
     parser.add_argument("--flash-policy", choices=("armed", "open"), default="armed",
                         help="armed matches the board's armed latch; open models the pre-arming window")
     args = parser.parse_args()
-    if not 5 <= args.timeout <= 300:
-        parser.error("timeout must be between 5 and 300 seconds")
+    if not 5 <= args.timeout <= 3600:
+        parser.error("timeout must be between 5 and 3600 seconds; a boot that reaches userspace "
+                     "under TCG spends minutes of wall time on seconds of kernel time")
     try:
         state = args.state_file
         if args.foreign_nor:
@@ -785,19 +1158,54 @@ def main():
             state = args.flash_image
             if not state.is_file():
                 raise ValueError(f"flash image not found: {state}")
-            nor_offset = 0
-            # No preset ran: an omitted --code-offset means the device starts with the boot image,
-            # which is the store-only layout's behaviour.
+            # The same resolver as a state file, so `--board --flash-layout store` is refused for
+            # this source too instead of slipping through the other branch.
+            layout, _size, nor_offset, code_offset = resolve_flash_layout(
+                state.stat().st_size, args.flash_layout, args.board, None, None)
+            if layout != "whole" or nor_offset != 0:
+                raise ValueError("--flash-image is a whole-device source; it cannot be booted as "
+                                 "the store-only layout")
+            # An explicit --nor-size (or --board's preset) is checked against the file rather than
+            # overwritten by it: the image's length is what the part is, so a request for another
+            # size is a contradiction, and booting the file at the requested size would silently
+            # slice a device image down to a window it is not.
+            if args.nor_size is not None and args.nor_size != state.stat().st_size:
+                raise ValueError(f"{state} is {state.stat().st_size:#x} bytes, "
+                                 f"not the modelled {args.nor_size:#x}")
+            args.nor_size = state.stat().st_size
+            # Deliberate and recorded: an explicit image that omits --code-offset keeps the old
+            # contract, in which the boot image starts at offset zero of the file, rather than
+            # taking the whole-device default. A state file that resolves to the whole-device layout
+            # does use the default. Changing either would reinterpret existing receipts.
             code_offset = 0 if args.code_offset is None else args.code_offset
+            code_offset_source = ("explicit" if args.code_offset is not None
+                                  else "zero-for-explicit-image")
         else:
-            nor_offset = 0x3000000
-            code_offset = None
+            size = state.stat().st_size if state is not None and state.exists() else None
+            layout, nor_size, nor_offset, code_offset = resolve_flash_layout(
+                size, args.flash_layout, args.board, args.code_offset, args.nor_size)
+            code_offset_source = ("explicit" if args.code_offset is not None else
+                                  "whole-device-default" if nor_offset == 0 else "not-sliced")
+            if layout == "whole":
+                args.nor_size = nor_size
+                if size is None:
+                    # run() creates it, after preparing the release, at this exact path.
+                    pass
+                elif size != WHOLE_DEVICE_SIZE:
+                    raise ValueError(
+                        f"{state} is {size:#x} bytes; a whole device is {WHOLE_DEVICE_SIZE:#x}. "
+                        "Pass --flash-layout store to boot it as the store-only layout it is")
+            else:
+                args.nor_size = nor_size
         args.nor_size = resolve_nor_size(state, args.nor_size)
         if args.flash_image is not None and state.stat().st_size != args.nor_size:
             raise ValueError(
                 f"{state} is {state.stat().st_size:#x} bytes, not the modelled {args.nor_size:#x}")
-        if args.smp not in (None, 1):
-            raise ValueError("the spark-fw-lab machine enforces one CPU; --smp cannot exceed 1")
+        if args.smp not in (None, 1, 2):
+            # Two CPUs are modelled: the profile sizes the redistributor region from the count and
+            # parks the secondaries until someone starts them. Their execution is not modelled yet,
+            # which the record says in `secondary_cpus`.
+            raise ValueError("the spark-fw-lab machine models one or two CPUs")
         if args.memory is not None:
             free = available_megabytes()
             wanted = parse_megabytes(args.memory)
@@ -830,6 +1238,18 @@ def main():
                         smp=args.smp, nor_size=args.nor_size, gdb_port=args.gdb,
                         allow_marker_only=args.pxe_allow_marker_only, nor_offset=nor_offset,
                         code_offset=code_offset, trace=args.flash_trace,
+                        code_offset_source=code_offset_source,
+                        program_model=args.program_model, trace_pc=args.trace_pc,
+                        trace_limit=args.trace_limit, trace_sample=args.trace_sample,
+                        trace_start=args.trace_start,
+                        trace_exceptions=args.trace_exceptions,
+                        extended_ram=args.extended_ram,
+                        nvme_images=args.nvme_image, qmp_path=args.qmp_alive,
+                        console_script=args.console_script, console_after=args.console_after,
+                        rot_functional=args.rot_functional,
+                        no_setup_escape=args.no_setup_escape,
+                        ffa_ec=args.ffa_ec,
+                        usb_image=args.usb_image,
                         accept_mmap_notify=args.accept_mmap_notify,
                         gwdt_timeout_ms=args.gwdt_timeout_ms,
                         stop_after_boots=args.stop_after_boots)
@@ -843,6 +1263,8 @@ def main():
             result = "Spark UEFI session verified"
         print(f"\n{result}. Local logs: {directory}")
     except (OSError, ValueError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
+        if os.environ.get("SPARK_DEBUG"):
+            raise                      # a one-line message hides where the failure came from
         print(f"error: {error}", file=sys.stderr)
         directory = getattr(error, "spark_run_directory", None)
         if directory is not None:

@@ -8,9 +8,19 @@ The monitor starts at EL3, boots the unchanged Spark Standalone MM package at
 `0x93a40000` in S-EL1, and then enters unchanged Spark UEFI at `0x80800000` in
 NS-EL2. A small S-EL2 dispatcher receives MM's HVC calls. EL3 switches between
 the suspended secure dispatcher and UEFI for MM direct messages. General,
-FP/SIMD, translation and basic EL1/EL2 context are saved per world. The runner
-disables SVE, SME and pointer authentication; this context implementation does
-not support those extensions or multiple CPUs.
+FP/SIMD, translation and basic EL1/EL2 context are saved per world, including the
+optional TCR2, stage-1 PIR/PIRE0 and HCRX state. This QEMU model keeps one copy
+per EL, not per security state: leaking Linux's PIE controls into STMM changes
+how its legacy page descriptors are interpreted. Optional register support is
+discovered once on the profile's `max` CPU (which supplies MMFR3); the secure
+state is restored without disabling the normal world's features.
+The runner disables SVE, SME and pointer authentication; this context
+implementation does not support those extensions or concurrent world switches.
+The permission-state regression does not cover GCS (GCSCR/GCSCRE0/GCSPR),
+fine-grained trap registers, SCTLR2 or every optional timer/debug/PMU group;
+their independent preservation remains unverified. SCR access enables are
+not evidence of saved context. See the
+[remaining platform boundaries](../docs/boot-status.md#remaining-platform-limits-and-evidence-boundaries).
 
 Supported FF-A operations are the pinned image's version/identity discovery,
 one-page RX/TX mapping, MM partition discovery/release, direct MM requests,
@@ -21,6 +31,38 @@ See [MM sharing and firmware buffer checks](../docs/mm-sharing.md) for the
 supported wire format and the unchanged firmware's fixed-buffer restriction.
 Unsupported calls return errors. This is a compatibility subset, not an FF-A
 conformance implementation or a replacement for production Hafnium/TF-A.
+
+PSCI_FEATURES advertises the implemented SMCCC_VERSION call, which returns
+exactly SMCCC 1.2 (`0x00010002`), so Linux can enable its register conduit.
+
+`boot_spark.py --ffa-ec` (or `build_monitor.py --ffa-ec`) opts into a separate
+Linux-facing EC packet model, compiled as `SPARK_FFA_EC`. Without this option
+the existing FF-A discovery is unchanged. The option answers FF-A RX/TX and
+direct-request feature queries and publishes a 24-byte descriptor for UUID
+`78b04d80-d21d-4986-8acb-467b60247ac5`, endpoint `0x8003`, one execution context,
+properties `0x0109`. Null-UUID discovery returns this service and STMM;
+count-only queries do not acquire RX, ordinary queries require mapping and
+release, and the firmware's existing STMM UUID-filtered path is retained.
+Register-based discovery and notifications remain unsupported.
+
+Both DIRECT_REQ2 and the legacy 64-bit direct request serve packet submit
+(`1`) and cached completion poll (`2`), with operations capabilities (`1`),
+read lower clamp (`4`), write lower clamp (`5`), and telemetry (`7`). Invalid
+operation/length combinations return a nonzero submit status without changing
+the floor. Completion is synchronous, not a simulation of a physical mailbox.
+The unset floor is `0xffff`. Published RPM is an **estimate** computed from the
+model's duty-to-RPM map, zero below its minimum duty and bounded at 100%.
+For a set floor the model applies that map's inverse independently to each
+fan, clipping nonzero requests to its range. Zero explicitly stops both fans.
+Duty is rational percent, preserving `forward(inverse(clipped floor))` exactly
+without asserting an undocumented physical PWM resolution. This inverse is
+arithmetic, **not an EC floor-to-duty controller**. For unset floors, the
+minimum duty and minimum estimates are an explicit model baseline, not execution
+of the firmware's automatic thermal curve.
+`MONITOR_TRACE` logs the clamp, duty numerator/denominator in percent, estimate,
+and whether the duty came from inverse arithmetic or the unset model baseline.
+No physical tachometer value, thermal policy, ramp/slew or republish timing is
+simulated. The ACPI fan path is unchanged.
 
 The real MM firmware implements UEFI variables. `nor.c` supplies its peer flash
 interface using a NOR variable partition at flash offset `0x03000000` (or `0x0`
@@ -61,8 +103,9 @@ firmware research lab. Use a new QEMU process for each cold boot.
 
 The synthetic integration test executes original S-EL1 and NS-EL2 guests,
 checks MM discovery and bad mapping rejection, makes two world switches,
-checks FP/SIMD and thread-register preservation, TRNG discovery/bounds/bit
-packing/nonrepeating requests, and timer PPI 30.
+checks legacy secure executable mappings against NS permission-indirection
+leaks and preserves NS TCR2/PIR/PIRE0/HCRX state, FP/SIMD and thread registers.
+It also checks TRNG discovery/bounds/bit packing/nonrepeating requests and timer PPI 30.
 An additional synthetic guest pair exercises NS memory sharing, RX ownership,
 retrieval and reclaim alongside a concurrent secure flash transaction.
 Native tests exercise the exact `nor.c` used by the monitor. CI has no vendor

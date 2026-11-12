@@ -1,55 +1,5 @@
-diff --git a/include/hw/arm/virt.h b/include/hw/arm/virt.h
---- a/include/hw/arm/virt.h
-+++ b/include/hw/arm/virt.h
-@@ -159,6 +159,17 @@
-     bool hvf_no_kernel_irqchip_default;
- };
- 
-+/* Experimental polled ROT transport; service payloads are not implemented. */
-+typedef struct SparkRotMailbox {
-+    MemoryRegion iomem;
-+    uint32_t tx[16];
-+    unsigned tx_count;
-+    uint32_t reply;
-+    bool reply_pending;
-+    bool ack_pending;
-+    bool reply_consumed;
-+} SparkRotMailbox;
-+
- struct VirtMachineState {
-     MachineState parent;
-     Notifier machine_done;
-@@ -166,6 +177,29 @@
-     FWCfgState *fw_cfg;
-     PFlashCFI01 *flash[2];
-     bool secure;
-+    bool spark_fw_lab;
-+    bool spark_rot_error_replies;
-+    SparkRotMailbox spark_rot[2];
-+    MemoryRegion spark_ecam;
-+    uint8_t spark_root_config[15][4096];
-+    MemoryRegion spark_pcie_cfg[36];
-+    uint8_t spark_pcie_cfgregs[36][0x10000];
-+    MemoryRegion spark_boardcfg;
-+    uint32_t spark_boardregs[1024];
-+    MemoryRegion spark_fuse;
-+    uint32_t spark_fuse_regs[0x10000 / 4];
-+    MemoryRegion spark_pcie_syscfg;
-+    uint32_t spark_pcie_sysregs[1024];
-+    MemoryRegion spark_usb_config[36];
-+    uint32_t spark_usb_regs[36][0x20000 / 4];
-+    MemoryRegion spark_boot_sram;
-+    MemoryRegion spark_boot_sram_secure;
-+    MemoryRegion spark_eint_mmio;
-+    MemoryRegion spark_eint_banks[4];
-+    uint32_t spark_eint[4][1024];
-+    qemu_irq spark_eint_irq;
-+    MemoryRegion spark_gpio_mmio[11];
-+    uint32_t spark_gpio[11][256];
-     bool highmem;
-     bool highmem_compact;
-     bool highmem_cxl;
 diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index 219597c..64658c8 100644
 --- a/hw/arm/virt.c
 +++ b/hw/arm/virt.c
 @@ -29,6 +29,8 @@
@@ -61,7 +11,15 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
  #include "qemu/datadir.h"
  #include "qemu/units.h"
  #include "qemu/option.h"
-@@ -91,6 +93,7 @@
+@@ -38,6 +40,7 @@
+ #include "hw/arm/boot.h"
+ #include "hw/arm/virt.h"
+ #include "hw/arm/machines-qom.h"
++#include "hw/pci/pci_host.h"
+ #include "hw/block/flash.h"
+ #include "hw/display/ramfb.h"
+ #include "net/net.h"
+@@ -91,6 +94,7 @@
  #include "hw/virtio/virtio-md-pci.h"
  #include "hw/virtio/virtio-iommu.h"
  #include "hw/char/pl011.h"
@@ -69,7 +27,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
  #include "hw/core/cpu.h"
  #include "hw/cxl/cxl.h"
  #include "hw/cxl/cxl_host.h"
-@@ -1291,7 +1294,8 @@
+@@ -1291,7 +1295,8 @@ static void gic_connect_ppis(VirtMachineState *vms)
  
      for (int i = 0; i < smp_cpus; i++) {
          DeviceState *cpudev = DEVICE(qemu_get_cpu(i));
@@ -79,7 +37,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
          /*
           * Mapping from the output timer irq lines from the CPU to the
           * GIC PPI inputs we use for the virt board.
-@@ -1419,7 +1423,9 @@
+@@ -1419,7 +1424,9 @@ static void create_gicv3(VirtMachineState *vms, MemoryRegion *mem)
       * Note that the num-irq property counts both internal and external
       * interrupts; there are always 32 of the former (mandated by GIC spec).
       */
@@ -90,7 +48,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      if (!kvm_irqchip_in_kernel() && !hvf_irqchip_in_kernel()) {
          qdev_prop_set_bit(vms->gic, "has-security-extensions", vms->secure);
      }
-@@ -1461,6 +1467,9 @@
+@@ -1461,6 +1468,9 @@ static void create_gicv3(VirtMachineState *vms, MemoryRegion *mem)
          sysbus_mmio_map(gicbusdev, 2, vms->memmap[VIRT_HIGH_GIC_REDIST2].base);
      }
  
@@ -100,22 +58,83 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      gic_connect_ppis(vms);
  
      fdt_add_gic_node(vms);
-@@ -1513,6 +1522,14 @@
+@@ -1500,6 +1510,45 @@ static void create_msi_controller(VirtMachineState *vms)
+     }
+ }
+ 
++/* A declared block: RAM the firmware names in its own ACPI tables. The OS reads these through
++ * ACPICA's system-memory handler, and an address the machine does not back is an external abort
++ * that kills the boot, so a block either exists here or the guest stops. */
++typedef struct SparkRamBlock {
++    uint32_t *data;
++    size_t size;
++} SparkRamBlock;
++
++static const MemoryRegionOps spark_cpueb_ops;
++
++/* An inert SoC window: reads return zero and writes are dropped. The vendor firmware's ACPI names
++ * far more blocks than this profile models, and a driver that reads an address the machine does not
++ * back takes an external abort that kills the boot. Zero is what "no device here" reads as — an
++ * identification register of zero makes a probe bail out — so the windows the SoC occupies are
++ * mapped inert under the real devices, which take priority. */
++static uint64_t spark_inert_read(void *opaque, hwaddr addr, unsigned size)
++{
++    (void)opaque;
++    (void)addr;
++    (void)size;
++    return 0;
++}
++
++static void spark_inert_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
++{
++    (void)opaque;
++    (void)addr;
++    (void)value;
++    (void)size;
++}
++
++static const MemoryRegionOps spark_inert_ops = {
++    .read = spark_inert_read,
++    .write = spark_inert_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 1,
++    .valid.max_access_size = 8,
++};
++
+ static void create_uart(const VirtMachineState *vms, int uart,
+                         MemoryRegion *mem, Chardev *chr, bool secure)
+ {
+@@ -1513,6 +1562,29 @@ static void create_uart(const VirtMachineState *vms, int uart,
      SysBusDevice *s = SYS_BUS_DEVICE(dev);
      MachineState *ms = MACHINE(vms);
  
 +    if (vms->spark_fw_lab && uart == VIRT_UART0) {
++        /* The board's console is a MediaTek 8250 whose register file is wider than the eight
++         * registers serial_mm_init models: Linux's 8250_mtk writes vendor registers well past
++         * them, and an access outside the model is an external abort in mem32_serial_out. So the
++         * 16550 sits inside a container, and the rest of the window is scratch registers that
++         * read back zero — a driver that probes a vendor register finds it present and inert. */
++        MemoryRegion *container = g_new0(MemoryRegion, 1);
++        SparkRamBlock *scratch = g_new0(SparkRamBlock, 1);
++        MemoryRegion *scratch_region = g_new0(MemoryRegion, 1);
 +        object_unref(OBJECT(dev));
-+        serial_mm_init(mem, 0x16a00000, 2,
++        memory_region_init(container, OBJECT(vms), "spark-uart-window", 0x1000);
++        scratch->size = 0x1000;
++        scratch->data = g_new0(uint32_t, 0x1000 / 4);
++        memory_region_init_io(scratch_region, OBJECT(vms), &spark_cpueb_ops, scratch,
++                              "spark-uart-scratch", 0x1000);
++        memory_region_add_subregion_overlap(container, 0, scratch_region, -1);
++        serial_mm_init(container, 0, 2,
 +                       qdev_get_gpio_in(vms->gic, 878 - 32), 115200, chr,
 +                       DEVICE_LITTLE_ENDIAN);
++        memory_region_add_subregion(mem, 0x16a00000, container);
 +        return;
 +    }
 +
      qdev_prop_set_chr(dev, "chardev", chr);
      sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
      memory_region_add_subregion(mem, base,
-@@ -2198,6 +2215,38 @@
+@@ -2198,6 +2270,37 @@ static void create_pcie(VirtMachineState *vms)
                                      high_mmio_alias);
      }
  
@@ -138,8 +157,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +        sysbus_mmio_map(gwdtsb, 0, 0x1c041000);
 +        sysbus_mmio_map(gwdtsb, 1, 0x1c042000);
 +        sysbus_connect_irq(gwdtsb, 0,
-+                           qdev_get_gpio_in(vms->gic,
-+                                            32 + vms->irqmap[VIRT_GWDT_WS0]));
++                           qdev_get_gpio_in(vms->gic, vms->irqmap[VIRT_GWDT_WS0]));
 +    }
 +
 +    if (vms->spark_fw_lab) {
@@ -154,7 +172,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      /* Map IO port space */
      sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, base_pio);
  
-@@ -2526,6 +2575,343 @@
+@@ -2526,6 +2629,534 @@ static void virt_set_high_memmap(VirtMachineState *vms,
      }
  }
  
@@ -184,6 +202,72 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +        break;
 +    }
 +}
++
++
++/*
++ * The CPUEB block: memory the firmware itself declares. \_SB.MTEL in the vendor DSDT publishes
++ * Memory32Fixed(0x05170000, 0x00060000), and the processor _CPC objects return registers inside it
++ * (0x5170000 + 0x5C404 = 0x51CC404), so the OS reads and writes it through ACPI at boot. Without a
++ * model here that access is an external abort in acpi_ex_system_memory_space_handler; with one it
++ * lands somewhere real. Backing it with zeroed storage is the honest minimum: the values are what
++ * the firmware would have programmed, and this profile does not claim to know them.
++ */
++#define SPARK_CPUEB_BASE 0x05170000
++#define SPARK_CPUEB_SIZE 0x00060000
++
++static uint64_t spark_cpueb_read(void *opaque, hwaddr addr, unsigned size)
++{
++    SparkRamBlock *block = opaque;
++    uint64_t value = 0;
++    for (unsigned i = 0; i < size && addr + i < block->size; i++) {
++        value |= (uint64_t)((uint8_t *)block->data)[addr + i] << (8 * i);
++    }
++    return value;
++}
++
++static void spark_cpueb_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
++{
++    SparkRamBlock *block = opaque;
++    for (unsigned i = 0; i < size && addr + i < block->size; i++) {
++        ((uint8_t *)block->data)[addr + i] = (value >> (8 * i)) & 0xff;
++    }
++}
++
++static const MemoryRegionOps spark_cpueb_ops;
++
++/* An inert SoC window: reads return zero and writes are dropped. The vendor firmware's ACPI names
++ * far more blocks than this profile models, and a driver that reads an address the machine does not
++ * back takes an external abort that kills the boot. Zero is what "no device here" reads as — an
++ * identification register of zero makes a probe bail out — so the windows the SoC occupies are
++ * mapped inert under the real devices, which take priority. */
++
++
++static SparkRamBlock *spark_declared_block(VirtMachineState *vms, hwaddr base, size_t size,
++                                          const char *name)
++{
++    SparkRamBlock *block = g_new0(SparkRamBlock, 1);
++    MemoryRegion *region = g_new0(MemoryRegion, 1);
++    block->size = size;
++    block->data = g_new0(uint32_t, (size + 3) / 4);
++    memory_region_init_io(region, OBJECT(vms), &spark_cpueb_ops, block, name, size);
++    memory_region_add_subregion(get_system_memory(), base, region);
++    return block;
++}
++
++static void spark_block_store32(SparkRamBlock *block, hwaddr offset, uint32_t value)
++{
++    for (unsigned i = 0; i < 4 && offset + i < block->size; i++) {
++        ((uint8_t *)block->data)[offset + i] = (value >> (8 * i)) & 0xff;
++    }
++}
++
++static const MemoryRegionOps spark_cpueb_ops = {
++    .read = spark_cpueb_read,
++    .write = spark_cpueb_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 1,
++    .valid.max_access_size = 8,
++};
 +
 +static const MemoryRegionOps spark_gpio_ops = {
 +    .read = spark_gpio_read,
@@ -318,6 +402,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +                            unsigned size)
 +{
 +    SparkRotMailbox *m = opaque;
++    bool functional = m->functional;
 +    switch (addr) {
 +    case 0x10: /* transmit FIFO */
 +        if (m->tx_count < ARRAY_SIZE(m->tx)) {
@@ -336,9 +421,33 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +            m->reply = (m->tx[0] & 0xff) | (1 << 12);
 +            m->reply_pending = m->ack_pending = true;
 +            m->reply_consumed = false;
-+            qemu_log_mask(LOG_UNIMP,
-+                          "spark ROT: service 0x%x unavailable; explicit error reply\n",
-+                          m->tx[0] & 0xff);
++            /* The whole message, not just the service id: the reply this transport sends is a
++             * refusal, so a capture of the request is the only record of what the caller asked
++             * for. Reconstructing a service from its own refused requests is the only sound way
++             * to implement one, and guessing at it once crashed the firmware. */
++            {
++                GString *message = g_string_new(NULL);
++                for (unsigned word = 0; word < m->tx_count; word++) {
++                    g_string_append_printf(message, "%s0x%08x", word ? " " : "", m->tx[word]);
++                }
++                qemu_log_mask(LOG_UNIMP,
++                              "spark ROT: service 0x%x refused; request[%u] = %s\n",
++                              m->tx[0] & 0xff, m->tx_count, message->str);
++                g_string_free(message, true);
++            }
++            if (functional) {
++                /* Only the services a capture shows the firmware calling are answered, and the
++                 * answer carries no authentication: it exists so the caller's own code path can
++                 * run to its next step instead of stopping here. */
++                unsigned service = m->tx[0] & 0xff;
++                if (service == 0x29 || service == 0x12) {
++                    m->reply = service; /* status 0: succeeded, no payload words */
++                    qemu_log_mask(LOG_UNIMP, "spark ROT: service 0x%x answered functionally\n",
++                                  service);
++                } else {
++                    m->reply = service | (1 << 12);
++                }
++            }
 +            m->tx_count = 0;
 +        } else {
 +            qemu_log_mask(LOG_GUEST_ERROR, "spark ROT: invalid doorbell/FIFO state\n");
@@ -438,18 +547,82 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +    .valid.unaligned = true, .impl.unaligned = true,
 +};
 +
++/* Segment 15 is the root the guest OS is told to walk: the vendor's MCFG entry puts it at
++ * 0x29000000 over buses 0-1, and the firmware's SSDT enables that bridge and none of the sixteen it
++ * declares in its own DSDT. Its slot 0 is a root port whose secondary bus is 1, which is where the
++ * endpoints answer.
++ */
++/* 0 for the current bisect: a bridge with nothing behind it, to separate 'the firmware
++ * tolerates the root port' from 'the firmware tolerates devices behind it'. */
++#define SPARK_PCIF_SEGMENT 15
++#define SPARK_PCIF_BASE    0x29000000
++#define SPARK_PCIF_SIZE    0x200000
++
++/* Which endpoint answers in a given segment window, if any. Each device appears exactly once across
++ * the sixteen windows, because the firmware walks all of them from its own MCFG and a device reachable
++ * through two roots is enumerated twice: measured, that second pass reads the same controller's
++ * configuration again and the boot never reaches PXE afterwards.
++ *
++ *   segment 0  (0xf300000000)     the NIC, at bus 1 slot 0 -- the slot the firmware's boot option
++ *                                and every stored receipt name
++ *   segment 15 (0x29000000, PCIF) the storage controllers, at bus 1 slot 2, 3, ...
++ *
++ * Segment 15 is the root the guest OS is told to walk: the vendor's own SSDT enables PCIF and none of
++ * the other bridges, so on this platform a Linux guest does not see the NIC and must see the disks.
++ *
++ * Bus 1 is the endpoint bus. The NIC sits at guest slot 0 while the host bridge keeps it at its own
++ * device 1 (devfn 8); that host devfn is never a guest slot, or the same NIC would answer at two
++ * addresses. Storage slots are looked up rather than listed.
++ */
++static PCIDevice *spark_endpoint(VirtMachineState *vms, unsigned segment, hwaddr offset)
++{
++    unsigned bus = (offset >> 20) & 0xff;
++    unsigned devfn = (offset >> 12) & 0xff;
++    if (!vms->bus) {
++        return NULL;
++    }
++    /* Segment 0, bus 1, slot 0: the NIC. The firmware's boot option names it there. */
++    if (segment == 0 && bus == 1 && devfn == 0) {
++        return pci_find_device(vms->bus, 0, 8);
++    }
++    /* Segment 15, ROOT bus: the storage controllers, where a guest OS cannot have to walk through
++     * a bridge this model does not need. Nothing is exposed on bus 1 of this segment. */
++    if (segment == SPARK_PCIF_SEGMENT && bus == 0 && devfn >= 16) {
++        return pci_find_device(vms->bus, 0, devfn);
++    }
++    return NULL;
++}
++
++static bool spark_endpoint_read(VirtMachineState *vms, unsigned segment, hwaddr offset,
++                                unsigned size, uint64_t *value)
++{
++    PCIDevice *endpoint = spark_endpoint(vms, segment, offset);
++    if (!endpoint) {
++        return false;
++    }
++    *value = pci_host_config_read_common(endpoint, offset & 0xfff, pci_config_size(endpoint), size);
++    return true;
++}
++
++static bool spark_endpoint_write(VirtMachineState *vms, unsigned segment, hwaddr offset,
++                                 uint64_t value, unsigned size)
++{
++    PCIDevice *endpoint = spark_endpoint(vms, segment, offset);
++    if (!endpoint) {
++        return false;
++    }
++    pci_host_config_write_common(endpoint, offset & 0xfff, pci_config_size(endpoint), value, size);
++    return true;
++}
++
 +static uint64_t spark_ecam_read(void *opaque, hwaddr addr, unsigned size)
 +{
 +    VirtMachineState *vms = opaque;
 +    unsigned segment = addr >> 28;
 +    hwaddr offset = addr & 0xfffffff;
-+    /* Minimal lab bridge: segment 0, bus 1, slot 0 -> GPEX slot 1.
-+     * Conventional NIC configuration is 256 bytes; extended accesses must
-+     * not spill into another GPEX devfn through pci_data_read/write.
-+     */
-+    if (segment == 0 && vms->bus && offset >= 0x100000 &&
-+        offset + size <= 0x100100) {
-+        return pci_data_read(vms->bus, 8 * 256 + (offset & 255), size);
++    uint64_t endpoint_value;
++    if (spark_endpoint_read(vms, segment, offset, size, &endpoint_value)) {
++        return endpoint_value;
 +    }
 +    if (offset + size > 4096) {
 +        return UINT64_MAX;
@@ -474,9 +647,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +    VirtMachineState *vms = opaque;
 +    unsigned segment = addr >> 28;
 +    hwaddr offset = addr & 0xfffffff;
-+    if (segment == 0 && vms->bus && offset >= 0x100000 &&
-+        offset + size <= 0x100100) {
-+        pci_data_write(vms->bus, 8 * 256 + (offset & 255), value, size);
++    if (spark_endpoint_write(vms, segment, offset, value, size)) {
 +        return;
 +    }
 +    if (offset + size > 4096 || offset < 4 ||
@@ -495,30 +666,106 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +    .impl.min_access_size = 1, .impl.max_access_size = 4,
 +};
 +
++static uint64_t spark_pcif_read(void *opaque, hwaddr addr, unsigned size)
++{
++    VirtMachineState *vms = opaque;
++    uint64_t value;
++    /* Diagnostic: the first accesses name their own bus and slot, so a boot that fails once this
++     * window exists says which side walked it. Bounded, so a run's log stays readable. */
++    static unsigned logged;
++    if (logged < 64) {
++        logged++;
++        qemu_log_mask(LOG_GUEST_ERROR, "spark: pcif read bus=%u devfn=%u reg=%#x size=%u\n",
++                      (unsigned)(addr >> 20) & 0xff, (unsigned)(addr >> 12) & 0xff,
++                      (unsigned)addr & 0xfff, size);
++    }
++    if (spark_endpoint_read(vms, SPARK_PCIF_SEGMENT, addr, size, &value)) {
++        return value;
++    }
++    /* No root port is modelled in this segment, so every other slot reads as "no device". A zeroed
++     * header would claim one at bus 0 slot 0, which is the one thing measured to derail the
++     * firmware's own boot. */
++    return UINT64_MAX;
++}
++
++static void spark_pcif_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
++{
++    VirtMachineState *vms = opaque;
++    if (spark_endpoint_write(vms, SPARK_PCIF_SEGMENT, addr, value, size)) {
++        return;
++    }
++    /* Nothing else in this segment takes writes: there is no bridge to configure. */
++}
++
++static const MemoryRegionOps spark_pcif_ops = {
++    .read = spark_pcif_read, .write = spark_pcif_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 1, .valid.max_access_size = 4,
++    .impl.min_access_size = 1, .impl.max_access_size = 4,
++};
++
  static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
  {
      MachineState *ms = MACHINE(vms);
-@@ -2534,10 +2920,162 @@
- 
-     vms->memmap = extended_memmap;
- 
-+    /* The inventoried Spark board maps its SBSA generic watchdog at
-+     * 0x1c041000 (control frame one 4 KiB page higher) and delivers WS0 on
-+     * SPI 848.  Placing it here makes the GTDT describe the same frames the
-+     * device is mapped at, so the firmware's watchdog service binds to real
-+     * registers instead of a protocol stub. */
-+    if (vms->spark_fw_lab) {
-+        vms->memmap[VIRT_GWDT_REFRESH].base = 0x1c041000;
-+        vms->memmap[VIRT_GWDT_CONTROL].base = 0x1c042000;
-+        /* The WS0 line keeps the machine's existing irqmap entry so that the
-+         * GTDT entry and sysbus_connect_irq agree without a second edit. */
-+    }
-+
-     for (i = 0; i < ARRAY_SIZE(base_memmap); i++) {
+@@ -2538,6 +3169,215 @@ static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
          vms->memmap[i] = base_memmap[i];
      }
  
 +    if (vms->spark_fw_lab) {
++        /* The inventoried Spark board maps its SBSA generic watchdog at
++         * 0x1c041000 (control frame one 4 KiB page higher) and delivers WS0 on
++         * SPI 848.  This has to come after the base table is copied in: the
++         * copy above would otherwise put the generic defaults back, and the
++         * GTDT would then describe frames the device is not mapped at. */
++        vms->memmap[VIRT_GWDT_REFRESH].base = 0x1c041000;
++        vms->memmap[VIRT_GWDT_CONTROL].base = 0x1c042000;
++        /* The board's own MADT declares its GIC ITS at 0x06840000 (record type 0x0f, ID 0), and the
++         * kernel maps what the table says: with the inherited 0x08080000 there is nothing at the
++         * address it was told, and its first ITS table write is an external abort. */
++        vms->memmap[VIRT_GIC_ITS].base = 0x06840000;
++    }
++
++    if (vms->spark_fw_lab) {
++        /* Everything under the modelled devices, so an address the firmware names but this profile
++         * does not model reads zero instead of aborting the guest. */
++        {
++            static const struct { hwaddr base, size; } inert[] = {
++                { 0x10000000, 0x0f000000 },   /* SoC peripherals the DSDT names, 0x10000000-0x1F000000 */
++                { 0x30000000, 0x02000000 },   /* MTEL's 0x311C0000 window and its neighbours */
++            };
++            for (unsigned window = 0; window < ARRAY_SIZE(inert); window++) {
++                MemoryRegion *region = g_new0(MemoryRegion, 1);
++                memory_region_init_io(region, OBJECT(vms), &spark_inert_ops, vms,
++                                      "spark-soc-inert", inert[window].size);
++                memory_region_add_subregion_overlap(get_system_memory(), inert[window].base,
++                                                   region, -10);
++            }
++        }
++        /* Blocks the firmware's own ACPI names. The power and performance interface, then the
++         * thermal registers the thermal zones read with \_TZ.RREG (0x1C238818 and friends, which
++         * hold tenths of a kelvin), then the two small windows MTEL also declares. */
++        spark_declared_block(vms, SPARK_CPUEB_BASE, SPARK_CPUEB_SIZE, "spark-cpueb");
++        {
++            /* The thermal zones read these with \_TZ.RREG; the value is tenths of a kelvin, and
++             * these are seeded so a zone reports a plausible temperature rather than zero. They are
++             * a seed, not a measurement: nothing in this profile models the sensor. */
++            static const struct { hwaddr offset; uint32_t tenths_kelvin; } zones[] = {
++                { 0x818, 3181 }, { 0x820, 3131 }, { 0x824, 3231 }, { 0x828, 3081 },
++                { 0x82c, 3281 }, { 0x830, 3031 }, { 0x834, 3331 },
++            };
++            SparkRamBlock *therm = spark_declared_block(vms, 0x1c238000, 0x1000, "spark-soc-therm");
++            for (unsigned zone = 0; zone < ARRAY_SIZE(zones); zone++) {
++                spark_block_store32(therm, zones[zone].offset, zones[zone].tenths_kelvin);
++            }
++        }
++        /* The processor _CPC packages put their minimum and maximum request registers at
++         * 0x05150480 and 0x05150500, outside MTEL's 0x05170000 window. A kernel that reads them
++         * through ACPICA aborts on an address the machine does not back, so the block exists here
++         * too - zero, which reads as "no request pending". */
++        spark_declared_block(vms, 0x05150000, 0x1000, "spark-cppc-requests");
++        spark_declared_block(vms, 0x1c870200, 0x400, "spark-mtel-2");
++        spark_declared_block(vms, 0x311c0000, 0x100, "spark-mtel-3");
++
 +        /* Experimental single-CPU Spark firmware profile, not a GB10 model. */
 +        static const hwaddr gpio_bases[] = {
 +            0x1002d000, 0x12440000, 0x12460000, 0x12830000, 0x12850000,
@@ -547,8 +794,9 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +            memory_region_add_subregion(get_system_memory(), eint_bases[bank],
 +                                       &vms->spark_eint_banks[bank]);
 +        }
-+        if (vms->spark_rot_error_replies) {
++        if (vms->spark_rot_functional || vms->spark_rot_error_replies) {
 +            for (unsigned i = 0; i < ARRAY_SIZE(vms->spark_rot); i++) {
++                vms->spark_rot[i].functional = vms->spark_rot_functional;
 +                memory_region_init_io(&vms->spark_rot[i].iomem, OBJECT(vms),
 +                                      &spark_rot_ops, &vms->spark_rot[i],
 +                                      "spark-rot-error-transport", 0x1000);
@@ -579,6 +827,11 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +            memory_region_add_subregion(get_system_memory(), usb_config[i].base,
 +                                        &vms->spark_usb_config[i]);
 +        }
++        /* Segments 0-14 are the firmware's own MCFG window at 0xf300000000; segment 15 is the
++         * guest OS's. All sixteen carry the same type-1 header at bus 0 slot 0 -- a root port whose
++         * class is 0x0604 -- and only segment 15 also gets the bus numbers and windows that let a
++         * kernel descend into bus 1 and place the endpoints' BARs.
++         */
 +        for (unsigned i = 0; i < 15; i++) {
 +            uint8_t *r = vms->spark_root_config[i];
 +            r[0] = 0xde; r[1] = 0x10; r[2] = 0xce; r[3] = 0x22;
@@ -590,6 +843,12 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +                              vms, "spark-empty-pcie-roots", 0xf0000000);
 +        memory_region_add_subregion_overlap(get_system_memory(), 0xf300000000UL,
 +                                            &vms->spark_ecam, 1);
++        /* Above the PCI memory window's priority: 0x29000000 lies inside it, and the guest's
++         * configuration reads must reach this bridge rather than be forwarded to the bus. */
++        memory_region_init_io(&vms->spark_pcif, OBJECT(vms), &spark_pcif_ops, vms,
++                              "spark-pcif-ecam", SPARK_PCIF_SIZE);
++        memory_region_add_subregion_overlap(get_system_memory(), SPARK_PCIF_BASE,
++                                            &vms->spark_pcif, 2);
 +        static const hwaddr pcie_config[] = {
 +            0x1d600000, 0x1d6a0000, 0x1d720000, 0x1d7a0000,
 +            0x1d800000, 0x1d810000, 0x1d820000, 0x1d830000, 0x1d950000,
@@ -649,11 +908,14 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +        vms->memmap[VIRT_FLASH].size = 0x04000000;
 +        vms->memmap[VIRT_GIC_DIST].base = 0x06800000;
 +        vms->memmap[VIRT_GIC_REDIST].base = 0x06880000;
-+        vms->memmap[VIRT_GIC_REDIST].size = 0x00020000;
++        /* One 128 KiB redistributor frame per CPU: two CPUs fit below the ITS window at
++         * 0x068a0000, so the region is sized from the machine's CPU count rather than fixed. */
++        vms->memmap[VIRT_GIC_REDIST].size = 0x00020000 * ms->smp.cpus;
 +        vms->memmap[VIRT_PCIE_MMIO].base = 0x20000000;
 +        vms->memmap[VIRT_PCIE_MMIO].size = 0x1eff0000;
-+        if (ms->smp.cpus != 1 || vms->gic_version != VIRT_GIC_VERSION_3) {
-+            error_report("spark-fw-lab requires one CPU and GICv3");
++        if (ms->smp.cpus < 1 || ms->smp.cpus > 2 ||
++            vms->gic_version != VIRT_GIC_VERSION_3) {
++            error_report("spark-fw-lab models one or two CPUs, with GICv3");
 +            exit(1);
 +        }
 +    }
@@ -661,7 +923,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      if (ms->ram_slots > ACPI_MAX_RAM_SLOTS) {
          error_report("unsupported number of memory slots: %"PRIu64,
                       ms->ram_slots);
-@@ -2943,6 +3481,21 @@
+@@ -2943,6 +3783,21 @@ static void machvirt_init(MachineState *machine)
      firmware_loaded = virt_firmware_init(vms, sysmem,
                                           secure_sysmem ?: sysmem);
  
@@ -683,7 +945,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      /* If we have an EL3 boot ROM then the assumption is that it will
       * implement PSCI itself, so disable QEMU's internal implementation
       * so it doesn't get in the way. Instead of starting secondary
-@@ -3264,6 +3817,26 @@
+@@ -3264,6 +4119,36 @@ static void machvirt_init(MachineState *machine)
      qemu_add_machine_init_done_notifier(&vms->machine_done);
  }
  
@@ -707,10 +969,20 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +    VIRT_MACHINE(obj)->spark_rot_error_replies = value;
 +}
 +
++static bool virt_get_spark_rot_functional(Object *obj, Error **errp)
++{
++    return VIRT_MACHINE(obj)->spark_rot_functional;
++}
++
++static void virt_set_spark_rot_functional(Object *obj, bool value, Error **errp)
++{
++    VIRT_MACHINE(obj)->spark_rot_functional = value;
++}
++
  static bool virt_get_secure(Object *obj, Error **errp)
  {
      VirtMachineState *vms = VIRT_MACHINE(obj);
-@@ -4213,6 +4786,15 @@
+@@ -4213,6 +5098,21 @@ static void virt_machine_class_init(ObjectClass *oc, const void *data)
          NULL, NULL);
      object_class_property_set_description(oc, "acpi",
          "Enable ACPI");
@@ -719,6 +991,12 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +                                   virt_set_spark_rot_error_replies);
 +    object_class_property_set_description(oc, "spark-rot-error-replies",
 +        "Opt-in ROT transport failure scenario; unavailable services return errors");
++    object_class_property_add_bool(oc, "spark-rot-functional",
++                                   virt_get_spark_rot_functional,
++                                   virt_set_spark_rot_functional);
++    object_class_property_set_description(oc, "spark-rot-functional",
++        "Answer the ROT services the firmware calls with their success status; a functional "
++        "model only, which authenticates nothing");
 +    object_class_property_add_bool(oc, "spark-fw-lab", virt_get_spark_fw_lab,
 +                                   virt_set_spark_fw_lab);
 +    object_class_property_set_description(oc, "spark-fw-lab",
@@ -727,9 +1005,10 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
                                     virt_set_secure);
      object_class_property_set_description(oc, "secure",
 diff --git a/hw/net/meson.build b/hw/net/meson.build
+index 84f142d..5644651 100644
 --- a/hw/net/meson.build
 +++ b/hw/net/meson.build
-@@ -12,7 +12,7 @@
+@@ -12,7 +12,7 @@ system_ss.add(when: 'CONFIG_E1000E_PCI_EXPRESS', if_true: files('net_tx_pkt.c',
  system_ss.add(when: 'CONFIG_E1000E_PCI_EXPRESS', if_true: files('e1000e.c', 'e1000e_core.c', 'e1000x_common.c'))
  system_ss.add(when: 'CONFIG_IGB_PCI_EXPRESS', if_true: files('net_tx_pkt.c', 'net_rx_pkt.c'))
  system_ss.add(when: 'CONFIG_IGB_PCI_EXPRESS', if_true: files('igb.c', 'igbvf.c', 'igb_core.c'))
@@ -740,6 +1019,7 @@ diff --git a/hw/net/meson.build b/hw/net/meson.build
  system_ss.add(when: 'CONFIG_VMXNET3_PCI', if_true: files('vmxnet3.c'))
 diff --git a/hw/net/spark-rtl8168.c b/hw/net/spark-rtl8168.c
 new file mode 100644
+index 0000000..40a46c3
 --- /dev/null
 +++ b/hw/net/spark-rtl8168.c
 @@ -0,0 +1,364 @@
@@ -1107,3 +1387,86 @@ new file mode 100644
 +};
 +static void rtl_register_types(void) { type_register_static(&rtl_type); }
 +type_init(rtl_register_types);
+diff --git a/include/hw/arm/virt.h b/include/hw/arm/virt.h
+index 22e66d1..c7c2b6f 100644
+--- a/include/hw/arm/virt.h
++++ b/include/hw/arm/virt.h
+@@ -159,6 +159,18 @@ struct VirtMachineClass {
+     bool hvf_no_kernel_irqchip_default;
+ };
+ 
++/* Experimental polled ROT transport; service payloads are not implemented. */
++typedef struct SparkRotMailbox {
++    MemoryRegion iomem;
++    uint32_t tx[16];
++    unsigned tx_count;
++    uint32_t reply;
++    bool reply_pending;
++    bool ack_pending;
++    bool reply_consumed;
++    bool functional; /* answer the services the firmware calls instead of refusing them */
++} SparkRotMailbox;
++
+ struct VirtMachineState {
+     MachineState parent;
+     Notifier machine_done;
+@@ -166,6 +178,31 @@ struct VirtMachineState {
+     FWCfgState *fw_cfg;
+     PFlashCFI01 *flash[2];
+     bool secure;
++    bool spark_fw_lab;
++    bool spark_rot_error_replies;
++    bool spark_rot_functional;
++    SparkRotMailbox spark_rot[2];
++    MemoryRegion spark_ecam;
++    MemoryRegion spark_pcif;
++    uint8_t spark_root_config[16][4096];
++    MemoryRegion spark_pcie_cfg[36];
++    uint8_t spark_pcie_cfgregs[36][0x10000];
++    MemoryRegion spark_boardcfg;
++    uint32_t spark_boardregs[1024];
++    MemoryRegion spark_fuse;
++    uint32_t spark_fuse_regs[0x10000 / 4];
++    MemoryRegion spark_pcie_syscfg;
++    uint32_t spark_pcie_sysregs[1024];
++    MemoryRegion spark_usb_config[36];
++    uint32_t spark_usb_regs[36][0x20000 / 4];
++    MemoryRegion spark_boot_sram;
++    MemoryRegion spark_boot_sram_secure;
++    MemoryRegion spark_eint_mmio;
++    MemoryRegion spark_eint_banks[4];
++    uint32_t spark_eint[4][1024];
++    qemu_irq spark_eint_irq;
++    MemoryRegion spark_gpio_mmio[11];
++    uint32_t spark_gpio[11][256];
+     bool highmem;
+     bool highmem_compact;
+     bool highmem_cxl;
+diff --git a/target/arm/tcg/op_helper.c b/target/arm/tcg/op_helper.c
+index c4433be..273f270 100644
+--- a/target/arm/tcg/op_helper.c
++++ b/target/arm/tcg/op_helper.c
+@@ -26,6 +26,7 @@
+ #include "accel/tcg/cpu-loop.h"
+ #include "accel/tcg/probe.h"
+ #include "cpregs.h"
++#include "qemu/log.h"
+ 
+ #define SIGNBIT (uint32_t)0x80000000
+ #define SIGNBIT64 ((uint64_t)1 << 63)
+@@ -1106,6 +1107,15 @@ const void *HELPER(access_check_cp_reg)(CPUARMState *env, uint32_t key,
+     }
+ 
+  fail:
++    if (res == CP_ACCESS_TRAP_EL3) {
++        /* A trap to EL3 from EL0/EL1 with no obvious cause is worth naming: the register, the
++         * function that refused it, and the controls that could have. */
++        qemu_log_mask(LOG_UNIMP,
++                      "cpreg %s trapped to EL3 from EL%d: scr=0x%" PRIx64
++                      " cptr3=0x%" PRIx64 " hcr=0x%" PRIx64 " hcrx=0x%" PRIx64 "\n",
++                      ri->name, arm_current_el(env), env->cp15.scr_el3,
++                      env->cp15.cptr_el[3], arm_hcr_el2_eff(env), arm_hcrx_el2_eff(env));
++    }
+     excp = EXCP_UDEF;
+     switch (res) {
+         /* CP_ACCESS_TRAP* traps are always direct to a specified EL */
