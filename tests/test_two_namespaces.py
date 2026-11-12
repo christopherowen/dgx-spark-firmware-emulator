@@ -10,7 +10,10 @@ harness builds and what it records about each image; that two controllers answer
 probe's job, in `tests/fixtures/nvme_probe.c`, and needs the profile.
 """
 
+import json
+import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -31,6 +34,26 @@ def attach(images) -> tuple[str, dict]:
     """
     arguments, entries = boot_spark.nvme_arguments(images, path_for=str)
     return " ".join(arguments), {"nvme_images": entries}
+
+
+def attach_in_child(image: Path) -> tuple[dict, float]:
+    """`attach([image])` in a fresh interpreter: its receipt, and that process's own peak RSS in MiB.
+
+    A child's peak is exact for the work it did, where the test process's own figure would include
+    whatever earlier tests left behind. `os.wait4` reports it on Linux (KiB) and macOS (bytes) alike.
+    """
+    code = ("import json, sys; sys.path.insert(0, sys.argv[1]); import tools.boot_spark as b; "
+            "print(json.dumps(b.nvme_arguments([sys.argv[2]], path_for=str)[1]))")
+    process = subprocess.Popen([sys.executable, "-c", code, str(ROOT), str(image)],
+                               stdout=subprocess.PIPE)
+    output = process.stdout.read()
+    process.stdout.close()
+    _, status, usage = os.wait4(process.pid, 0)
+    process.returncode = os.waitstatus_to_exitcode(status)
+    if process.returncode != 0:
+        raise AssertionError(f"the hashing child exited with {process.returncode}")
+    unit = 1 if sys.platform == "darwin" else 1024
+    return {"nvme_images": json.loads(output)}, usage.ru_maxrss * unit / (1024 * 1024)
 
 
 class TwoNamespaceTests(unittest.TestCase):
@@ -76,11 +99,8 @@ class TwoNamespaceTests(unittest.TestCase):
         big = Path(self.directory.name) / "big.img"
         with big.open("wb") as handle:
             handle.truncate(2 * 1024 * 1024 * 1024)
-        before = Path("/proc/self/statm").read_text().split()[1]
-        _, record = attach([big])
-        after = Path("/proc/self/statm").read_text().split()[1]
-        grown_mb = (int(after) - int(before)) * 4096 / (1024 * 1024)
-        self.assertLess(grown_mb, 256, f"the hash grew the process by {grown_mb:.0f} MiB")
+        record, peak_mb = attach_in_child(big)
+        self.assertLess(peak_mb, 256, f"hashing peaked at {peak_mb:.0f} MiB")
         self.assertEqual(record["nvme_images"][0]["size"], 2 * 1024 * 1024 * 1024)
         import hashlib
         expected = hashlib.sha256()

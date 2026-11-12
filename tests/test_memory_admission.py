@@ -10,10 +10,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import tools.boot_spark as boot_spark  # noqa: E402
 from tools.boot_spark import available_megabytes  # noqa: E402
 
 GIB = 1024 * 1024 * 1024
@@ -64,6 +66,12 @@ class AdmissionTests(unittest.TestCase):
         root = self.root({"memory.max": str(1 * GIB), "memory.current": str(2 * GIB)})
         self.assertEqual(available_megabytes(root, host_megabytes=8192), 0)
 
+    def test_a_host_without_a_reading_claims_nothing(self):
+        """No `/proc/meminfo` (macOS) and no cgroup: the admission step gets None and does not refuse."""
+        with mock.patch.object(boot_spark, "open", create=True, side_effect=OSError):
+            self.assertIsNone(available_megabytes(self.root({})))
+
+    @unittest.skipUnless(Path("/proc/meminfo").is_file(), "the host has no /proc/meminfo")
     def test_without_an_injected_host_value_proc_meminfo_is_read(self):
         """One read, checked for plausibility: the reading itself is not something to pin."""
         available = available_megabytes(self.root({}))

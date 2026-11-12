@@ -40,10 +40,17 @@ def build(source=None, output=None):
         return output
     flags = subprocess.run([find_tool("pkg-config"), "--cflags", "glib-2.0"],
                            capture_output=True, text=True, check=True).stdout.split()
+    link = []
+    if sys.platform == "darwin":
+        # Mach-O refuses undefined symbols in a shared object unless told otherwise. The plugin API
+        # and glib are resolved from the QEMU process that loads the plugin, as QEMU's own plugins do.
+        link = ["-Wl,-undefined,dynamic_lookup",
+                *subprocess.run([find_tool("pkg-config"), "--libs", "glib-2.0"],
+                                capture_output=True, text=True, check=True).stdout.split()]
     output.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run([find_tool("cc"), "-O2", "-fPIC", "-shared", "-Wall", "-Wextra", "-Werror",
                     "-I", str(source / "include"), "-I", str(source / "include" / "plugins"),
-                    *flags, str(PLUGIN), "-o", str(output)], check=True)
+                    *flags, str(PLUGIN), "-o", str(output), *link], check=True)
     stamp.write_text(digest + "\n")
     return output
 
