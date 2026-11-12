@@ -1009,9 +1009,9 @@ void handle(u64 *r, u64 level) {
         return;
     }
 #ifdef MONITOR_TRACE
-    /* The firmware's runtime variable code speaks FF-A to an endpoint this monitor does not serve,
-     * and guessing at the protocol once crashed the firmware. So the request is written down first:
-     * the endpoints, the sizes, and the first bytes of the buffer the caller filled in. */
+    /* Record the direct-message protocol before dispatch. Runtime requests for 0x8004
+     * are relayed to real STMM below, never answered with flash-service semantics.
+     * shared_address here describes a flash share, not the MM communication buffer. */
     if (fid == DIRECT_REQ) {
         console_puts("\nDIRECT_REQ a1=");
         hex(r[1]);

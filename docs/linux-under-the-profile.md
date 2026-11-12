@@ -163,7 +163,8 @@ registers behind it, so a vendor register reads back present and inert.
 
 ## A closed lever: answering the runtime service as if it were the flash service
 
-`efisubsys_init` stalls in a loop of FF-A direct requests. Traced from the monitor
+An early investigation attributed a stall to `efisubsys_init`; the later
+relay capture below disproved that attribution. Traced from the monitor
 (`firmware/runs/20261109T075617`, `--flash-trace`), the repeated call is
 `FFA_MSG_SEND_DIRECT_REQ` — SMC function `0xC400006F` — with destination endpoint `3`, source endpoint
 `0`, and message words `0xC4000064` and a buffer address (`a1=0x3`, `a3=0xc4000064`, `a4=0x93a7f000`),
@@ -177,8 +178,10 @@ same MM-communication path the repository already documents for the pre-runtime 
 pair and answering it from the same `nor_request()` model looks like the obvious one-line fix, and it
 is wrong: the firmware takes a synchronous exception immediately (`Synchronous Exception at
 0x0000000084…`). Endpoint `0x8004` is a different service with a different protocol, not the flash
-service under another number, and replying to it with flash semantics breaks the caller. The profile
-therefore keeps `efi=noruntime` and the limitation is stated rather than papered over.
+service under another number, and replying to it with flash semantics breaks the caller.
+At that historical stage the profile kept `efi=noruntime`. The subsequent
+relay/context correction uses real STMM, not a flash-service substitution;
+the installed guest now has runtime variable access as measured below.
 
 ## What is still missing
 
@@ -306,22 +309,37 @@ payload was supposed to fill, so `DATA_UUID` is empty and it exits on
 the flow needs from the vendor archive — `fastos-release.txt`, `efi.tar.xz`, `fastos.partaa`,
 `fastos.partab` — into a partition on a `virtio-scsi` disk.
 
-## The FF-A direct-request loop is the secure world's, not the kernel's
+## Historical recovery-media variable failure, before the context fix
 
-The loader passes `efi=noruntime` because an earlier note said the kernel's `efisubsys_init` spins in an
-FF-A direct-request loop. With the monitor's relay now logging both sides of every direct request, and
-the flag removed for one run, that premise does not hold:
+At this stage the loader passed `efi=noruntime` because an earlier note
+said the kernel's `efisubsys_init` spins in an FF-A direct-request loop.
+With the monitor's relay logging both sides of every direct request,
+and the flag removed for one run, that premise did not hold:
 
 - `efisubsys_init` **returns 0 in one millisecond** — no spin;
 - the boot still reaches userspace (`--- FastOS Version`), so the flag is not what saves it;
 - the requests that do loop carry `x1 = 3` — no modelled endpoint — and come from the **secure world**
   (`SMC … ns=0x0`, `elr=0x93a7e168`), in 640 identical pairs of which 466 are answered;
-- EFI variables still do not work either way: the initramfs reports
+- EFI variables still did not work in that **pre-fix recovery-media run**:
   `mount: mounting none on /sys/firmware/efi/efivars failed: Operation not supported`.
 
-So the flag is a no-op with a stale justification rather than a workaround. What actually gates EFI
-variables is the firmware's runtime variable service, which is reached through an endpoint this
-monitor does not serve — the same gap, now named precisely instead of hidden behind a flag.
+The flag was a no-op with a stale justification rather than a workaround.
+The monitor already relayed endpoint `0x8004` to real STMM; it was wrong
+to describe that endpoint as an unimplemented service. The later measured
+fault was permission-indirection state crossing the world boundary, fixed
+by the per-world TCR2/PIR/PIRE0/HCRX save/restore.
+
+**Present measured state:** `20261112T060832.086295Z/serial.log` records
+`EFIVARFS_MOUNT_RC=0`, `efivarfs efivarfs /sys/firmware/efi/efivars`,
+and `EFIBOOTMGR_CREATE_RC=0` for `Boot0006* Spark runtime persistence`,
+whose loader is `\EFI\ubuntu\shimaa64.efi`. A separate-process cold boot,
+`20261112T063956.565964Z/serial.log`, reaches `localhost login: root`
+and reports `BootCurrent: 0006` with that same entry and loader.
+The matching creation-after/cold-before NOR hashes and complete
+[create-and-cold-boot evidence](runtime-variables.md#fresh-runtime-create-and-cold-boot-persistence)
+establish persistence, not just a successful create in memory. The
+earlier installer failure and fallback-only boot are historical, not a
+remaining runtime-service gap.
 
 ## The installed disk boots to the installed kernel under the vendor UEFI
 
@@ -336,10 +354,15 @@ Version 2.22.1295. Copyright (C) 2026 AMI … Ver: 0ACUM028
 [    0.000000] printk: legacy bootconsole [uart0] enabled
 ```
 
-`7.0.0-1019` is the kernel inside the restored root; the recovery media carries `7.0.0-1018`. So the
-chain ran: firmware → `EFI/BOOT/BOOTAA64.EFI` on `nvme0n1p1` → shim → GRUB → `/boot` on `nvme0n1p2` →
-the installed kernel. No NVRAM entry was needed, which is why the earlier `efibootmgr` failure did not
-block this: **the install is complete and the disk is bootable.**
+`7.0.0-1019` is the kernel inside the restored root; the recovery media carries `7.0.0-1018`.
+That historical first boot used firmware → `EFI/BOOT/BOOTAA64.EFI` on
+`nvme0n1p1` → shim → GRUB → `/boot` on `nvme0n1p2` → the installed kernel.
+No NVRAM entry was needed then, so the earlier installer `efibootmgr`
+failure did not block it: **the install completed and the disk was bootable**.
+This is not a present restriction to fallback boot. An NVRAM boot entry
+can also name a file in `EFI/BOOT`; only `BootCurrent` plus the entry's
+device/file path distinguishes that selection from removable-media
+fallback. See the [runtime persistence evidence](runtime-variables.md#fresh-runtime-create-and-cold-boot-persistence).
 
 Two things must not be read into that log:
 

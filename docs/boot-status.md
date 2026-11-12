@@ -400,6 +400,16 @@ model, or measured device/stream mappings and a corresponding platform
 description, would be needed to remove the limitation. Guest-side probe
 failures are distinct evidence from these host startup refusals.
 
+The separate guest measurement in retained
+`20261112T060832.086295Z/serial.log` reports all three probe failures
+(ANSI stripped):
+
+```text
+[    2.535931] arm-smmu-v3 arm-smmu-v3.0.auto: no translation support!
+[    2.541182] arm-smmu-v3 arm-smmu-v3.1.auto: no translation support!
+[    2.542548] arm-smmu-v3 arm-smmu-v3.2.auto: no translation support!
+```
+
 ### eSPI is not reached
 
 The capsule contains a plaintext `eSPI Service` with a manifest and
@@ -426,3 +436,27 @@ ROM/BL31 root of trust. Certificate hashes, guest readback and the
 `DBX_PRESENT=False` capture are linked from the
 [Secure Boot provenance boundary](linux-under-the-profile.md#secure-boot-provenance-boundary).
 
+## Runtime variables and a selected non-fallback boot entry
+
+The earlier recovery-initramfs `Operation not supported` and installer
+`efibootmgr` failure are pre-context-fix history. Fresh retained creation
+run **`20261112T060832.086295Z`** explicitly unmounts/remounts efivarfs
+and records `EFIVARFS_MOUNT_RC=0`,
+`efivarfs efivarfs /sys/firmware/efi/efivars`, and
+`EFIBOOTMGR_CREATE_RC=0`. The created entry is
+`Boot0006* Spark runtime persistence`, loader
+`\EFI\ubuntu\shimaa64.efi`.
+
+After that harness/QEMU exited, a **new process** cold-boots retained
+run **`20261112T063956.565964Z`**. Its UART reaches
+`localhost login: root`; `efibootmgr -v` reports `BootCurrent: 0006`
+and the same named entry and non-fallback loader. Creation-after and
+cold-before NOR SHA-256 are identical. This is persisted and selected
+NVRAM, not just a successful write before a warm reset. The
+`EFI/BOOT` fallback remains an available path, not the only bootable one.
+
+The existing real-STMM relay plus permission-context fix already supply
+the service; no second variable database or forged EFI response was added.
+The original isolated-disk root hash was restored after the authenticated
+sessions, and both accepted Secure Boot stores were left unchanged.
+See [the complete runtime evidence, request frame and custody](runtime-variables.md#fresh-runtime-create-and-cold-boot-persistence).
