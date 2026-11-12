@@ -71,5 +71,114 @@
       "control (the last level written, from AML state)",
       "speed in rpm (from the SMC reply)"
     ]
+  },
+  "write_path_measured": {
+    "date": "2026-11-11",
+    "unit": "one ACUM027 unit, Secure Boot off, module built with the unit's own kbuild",
+    "level_scale_is_a_floor": "the _FSL scale maps level 0..100 to 975 + 3375*level/100 rpm, i.e. 975 to 4350 rpm. That is a floor, not a fan setting: level 100 asks for 4350 rpm and the EC is free to run above it. Two different levels are therefore often the same setting to the EC, which is why an A/B on the level measured nothing",
+    "transport_takes_rpm": "the write commands 0x06000790..0x06000793 carry the rpm itself as two little-endian bytes, so a floor above the _FSL scale can be asked for directly: rpm_floor=13500 was written and the service then reported 8820/12420 rpm. The quiet third-party project on the same hardware reports the fans reaching 9000/13500 rpm, which is consistent",
+    "heard": "with the 13500 floor the machine is audibly louder than the other units on the same desk \u2014 the corroboration the tachometer cannot give, since both come from the same service",
+    "thermal_observation": {
+      "what": "the same 8-worker CPU load was run for the same duration under three settings and the hottest thermal zone sampled once a second",
+      "peaks_C": {
+        "firmware control": 61,
+        "floor 4350 rpm": 60,
+        "floor 12500 rpm": 55
+      },
+      "reading": "the high floor held the machine 6 C cooler under the same load",
+      "not_a_benchmark": "one run per arm, no repetition, no control for ambient or for the EC's own policy; this is an observation, not a controlled performance benchmark. The cooling-rate arms of the same script produced no measurement because the machine never rose above the cool-to target in two of the three arms",
+      "not_a_benchmark_precedent": "the third-party project states the same limit about its own thermal runs, and this record follows it"
+    },
+    "does_not_revert": "nothing in this interface releases the EC's clamps: unloading the module and writing pwm1_enable=2 both leave the last floor in place. A reboot is the only restore, which is why the module refuses to write without allow_pin=1",
+    "read_warmup": "a status read answers 0 on the first call after a gap and the rpm on the second; both status ids behave the same way"
+  },
+  "cross_version": {
+    "what_was_compared": "the fan AML in two DSDTs we hold: the capsule's (vendor UEFI 2.158.15, which reports BIOS 5.36_0ACUM028) and a unit's own (BIOS 5.36_0ACUM027)",
+    "acum027_units": {
+      "dsdt": "no Device (FAN0), no _FSL, no _FST, no WFCF, and none of the four write literals 0x06000790..0x06000793 (grep count 0)",
+      "service": "the SMC service is present anyway: measured on one ACUM027 unit, reads answered 4320 rpm, tracked writes moved the fans, and a 13500 rpm floor produced 8820/12420 rpm and an audible increase"
+    },
+    "acum028_capsule": {
+      "dsdt": "Device (FAN0) present with _FSL/_FST/WFCF and the four write literals",
+      "service": "not measured: no ACUM028 unit was available; the monitor's model of the service is not evidence about firmware",
+      "dsdt_detail": {
+        "call": "_FSL -> WFCF -> WRB with XX0 = 0xC400008D and XX1 = 0x8003 (dsdt.dsl:16111-16112, 16149-16150)",
+        "write": "WFCF writes 0x06000790..0x06000793 with the rpm low byte then high byte, both fans (dsdt.dsl:16120-16133)",
+        "scale": "RPM = FMIN + ((FMAX - FMIN) * level) / 0x64 with FMIN = 0x3CF (975) and FMAX = 0x10FE (4350) (dsdt.dsl:16062-16063)",
+        "consequence": "the function id, endpoint, command ids and level scale this module uses are the newest firmware's own AML constants, not values inferred from behaviour. What is still unproven on ACUM028 is the service that answers behind the call"
+      }
+    },
+    "reading": "the constants this model uses come from the *newer* firmware's DSDT and work on the older units whose ACPI does not publish a fan device at all, because the module talks to the service directly and needs no ACPI. New-to-old is measured; old-to-new and anything later is inference",
+    "confidence": {
+      "acum027_units": "high - measured end to end on one unit, and all three live units run this build",
+      "acum028": "high by construction, unproven in execution - the newest firmware's DSDT calls this exact function id and endpoint and writes these exact commands with this exact scale, so the interface is the firmware's own; no ACUM028 unit has been available to confirm that the service answers",
+      "later_firmware": "unverified: the function id, endpoint, GUID, status ids and command base are compiled in. No capability probe establishes compatibility before interface registration or an opted-in rpm_floor write. Pinning requires allow_pin=1, but that opt-in does not establish that the IDs are valid on later firmware"
+    },
+    "what_would_raise_it": "run tools/fan_verify.sh read-only on an ACUM028 unit and compare against the ACUM027 baseline in docs/fan-verify-on-a-unit.md. The remaining question is not whether the interface exists - the firmware documents it - but whether the EC behind it answers on that build",
+    "third_image_asus": {
+      "what": "the third firmware the emulator supports, version 4.1.0, whose banner reads 0ACUM10 -- a different lineage from 0ACUM027/0ACUM028 and the ASUS Ascent image",
+      "dsdt_measurements": {
+        "3.4-0ACUM10 (4.1.0)": {
+          "bytes": 70143,
+          "sha256": "bd192126e52ca8fa12df209f4efd35ea1a573220f9de3836ae39260d59400cb1",
+          "fan0": 0,
+          "_fsl": 0,
+          "_fst": 0,
+          "wfcf": 0,
+          "_tmp": 9
+        },
+        "5.36-0ACUM027 (2.155.11)": {
+          "bytes": 70143,
+          "sha256": "bd192126e52ca8fa12df209f4efd35ea1a573220f9de3836ae39260d59400cb1",
+          "fan0": 0,
+          "_fsl": 0,
+          "_fst": 0,
+          "wfcf": 0,
+          "_tmp": 9
+        },
+        "5.36-0ACUM028 (2.158.15)": {
+          "bytes": 71058,
+          "sha256": "62747a91bfcc547bb3c4ccf563097316178cc1b9a0423e27ef8d3d98c85c8b67",
+          "fan0": 3,
+          "_fsl": 2,
+          "_fst": 2,
+          "wfcf": 3,
+          "_tmp": 9
+        }
+      },
+      "what_the_boot_calls_actually_are": {
+        "measured_in": "firmware/runs/20261111T122225.531884Z, --firmware-version 4.1.0 --flash-trace",
+        "call": "SMC 0xC400008D with x1 = 0x8003 and x2 = 0x20418532a0634a88, 2071 times",
+        "correction": "0xC400008D is FFA_MSG_SEND_DIRECT_REQ2, not a fan service id. Endpoint 0x8003 is SPARK_FIRMWARE_PARTITION_ID and the constant payload is the low half of service UUID 884a63a0-3285-4120-83aa-eec008a0a546, the firmware-inventory service: command 12 reads the EC version at 0x06000760 and the PD versions at 0x06000770/0x06000774.",
+        "so": "those calls are EC-version reads by FmpEndOfDxe/SmbiosType45Dxe, not fan control. An earlier version of this record read the constant as a fan poll and inferred a fan path from it; that inference is withdrawn. Whether the ASUS image's fan path is live is an open question and it is not answered at 0x8003.",
+        "source": "christopherowen/spark-open-firmware, soc/uefi/include/FirmwareInventoryLayout.h"
+      }
+    },
+    "ec_source": {
+      "what": "the EC capsule (0x3000508, app 3.5.8) recovered to source by christopherowen/spark-open-firmware, rebuilt byte-identical, so the fan controller is readable C",
+      "file": "ec/ecfw/src/thermal/thermalmgmt.c",
+      "constants": {
+        "fan_duty_min": 14,
+        "fan_duty_max": 100,
+        "fan_duty_step_up": 10,
+        "publish_threshold_percent": 5.0,
+        "cpu_rpm_range": [
+          1260,
+          9000
+        ],
+        "rear_rpm_range": [
+          1890,
+          13500
+        ],
+        "absent_host_clamp": "0xFFFF"
+      },
+      "published_speed_is_an_estimate": "thermal_update_fan_rpm computes rpm = (duty-14)/(100-14)*(max-min)+min and publishes 0 below duty 14, on a zero tach, or on a wrapping estimate; the tachometer never supplies the published value",
+      "explains": [
+        "[INFERENCE] a first read after a gap answers 0 and the next carries an rpm; a link to the 5 percent publish filter is unproven without a poll or EC-pass timing trace",
+        "a host floor stays pinned until reboot: nothing in this code clears a clamp",
+        "a 13500 rpm request produced 8820/12420: 13500 is FAN_REAR_MAX_RPM and both numbers are estimates at the resulting duty",
+        "the ACPI _FSL scale (975..4350) is not the EC's scale (1260..9000 / 1890..13500), so the two sides of the interface never agreed"
+      ]
+    }
   }
 }

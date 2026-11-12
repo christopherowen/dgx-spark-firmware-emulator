@@ -132,6 +132,15 @@ be driven from a host test:
   measured on the unit at host `0x06000600`, EC `0x119000`. Both receive the same value, which pins
   the fans rather than setting a second one;
 - **read**: `x4 = 0x0C | (0x06000704 << 8) | (2 << 40)` returns the rpm in `x4`;
+- **a read answers zero once before it answers**: measured on a unit (2026-11-11), the *first* read
+  after a gap returns `0` with the success completion code, and the *second* returns the rpm — for
+  either status id. Two consecutive reads of `0x06000706` gave `0x0` then `0x10e0` (4320 rpm), with
+  the cooling device reading level 99 in the same instant. This is what made an earlier version of
+  `kernel/spark_fan.c` conclude that "`0x06000704` answers 0", and it is why the module now issues each
+  status read twice and keeps the second answer. It does **not** show that the two ids are one fan:
+  both fans are driven to the same rpm by `_FSL`, so equal readings are what two identically-driven
+  fans look like;
+
 - the reply is `x0 = 0xC400008E`, the endpoint echoed in `x1`, and the register file cleared to
   `x17` — the same shape the RTC service on the same function id uses;
 - `fan_rpm_for_level()` reproduces `WFCF`'s arithmetic exactly: `975 + (4350 - 975) * level / 100`.
@@ -290,3 +299,108 @@ has loaded there at least once, but a refusal at load time is still possible and
 **The pin is the part to think about, not the read.** With `allow_pin=1`, writing a level sets both clamp
 registers and nothing in ACPI restores them: a reboot is the only measured way back, and the fans stay
 capped at the level's rpm (4350 at level 100, against fan 0's 9000) even under load.
+
+## The hwmon interface, and why `pwm1` is not the tachometer
+
+`kernel/spark_fan.c` registers a thermal cooling device *and* an hwmon device (`spark_fan`):
+
+| attribute | meaning |
+| --- | --- |
+| `fan1_input`, `fan2_input` | rpm from the two status ids, each read twice because of the warm-up above |
+| `pwm1` | manual: requested level; otherwise: reported current level, scaled 0..255 |
+| `pwm1_enable` | `2` = the module stops writing (the default), `1` = manual; neither `2` nor module unload releases an existing EC clamp |
+
+A write to `pwm1` while `pwm1_enable` is `2` is refused with `EPERM` rather than silently ignored, and
+`pwm1` reports the setpoint in manual mode rather than the reported current level: after `echo 20`
+the measured level was still 87 four seconds later. An immediate readback need not match the setpoint.
+
+## What the level actually is, measured on a unit (2026-11-11)
+
+Two corrections that change how the interface should be used, both from one supervised run on an
+ACUM027 unit:
+
+- **the `_FSL` level is a floor, not a fan setting.** The scale maps level 0..100 to `975 + 3375·level/100`
+  rpm — 975 to **4350 rpm** — and the EC is free to run the fans above whatever floor it is given. Two
+  different levels are therefore often the same setting to the EC, which is why an A/B on the level
+  measured nothing at all. Anything that must be audible has to ask for an rpm.
+- **the transport carries the rpm itself.** The write commands `0x06000790..0x06000793` take two
+  little-endian bytes of rpm, so a floor above the `_FSL` scale can be requested directly: `13500` was
+  written and the service then reported **8820/12420 rpm**, audibly louder than the other units beside it.
+- **this is the interface the firmware itself uses, not one inferred from behaviour.** The newest DSDT
+  we hold (`ACUM028`) implements `FAN0._FSL` as `WFCF` → `WRB` with `XX0 = 0xC400008D`, `XX1 = 0x8003`,
+  and writes `0x06000790..793` with `RPM = FMIN + ((FMAX - FMIN) * level) / 0x64` where `FMIN = 0x3CF`
+  (975) and `FMAX = 0x10FE` (4350) — the same function id, endpoint, commands and scale this module uses.
+  The older units' ACPI publishes no fan device at all, yet the service answers there, so the interface
+  outlived its own ACPI description rather than the other way round.
+
+Under the same 8-worker load for the same duration, the hottest zone peaked at **61 °C** with firmware
+control, **60 °C** at a 4350 rpm floor and **55 °C** at 12500 — one run per arm, so an observation and not
+a benchmark. The cooling-rate arms of the same script measured nothing, because the machine never rose
+above the cool-to target in two of the three arms.
+
+Unloading the module or writing `pwm1_enable=2` stops module writes but leaves the EC's clamps
+as last written; neither restores automatic control. **A reboot is the only measured restore**,
+which is why the module refuses to write without `allow_pin=1`.
+
+## The third firmware: 4.1.0 (banner `0ACUM10`), which declares no fan device
+
+The emulator carries three firmware versions, and the third is a different lineage from
+`0ACUM027`/`0ACUM028`: version `4.1.0`, whose banner reads `0ACUM10`. Two measurements decide what can be
+claimed for it.
+
+**Its DSDT does not describe a fan.** Extracted from the capsule by decompressing the `MSS1`/`FILEINFO`
+LZMA stream, then reading the `DSDT` table at its own header:
+
+| image | DSDT bytes | `FAN0` | `_FSL` | `_FST` | `WFCF` | `_TMP` |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4.1.0 (`0ACUM10`) | 70 143 | 0 | 0 | 0 | 0 | 9 |
+| 2.155.11 (`0ACUM027`) | 70 143 | 0 | 0 | 0 | 0 | 9 |
+| 2.158.15 (`0ACUM028`) | 71 058 | 3 | 2 | 2 | 3 | 9 |
+
+The first two tables are byte-identical (same sha256), so `0ACUM10` and `0ACUM027` share one ACPI view:
+thermal zones but no fan device, therefore no `_FSL`, no `WFCF` and no rpm literals to write.
+
+**What its boot calls are not.** Booting that image with the monitor's SMC log shows 2071 calls to
+`SMC 0xC400008D` with `x1 = 0x8003` and a constant `x2 = 0x20418532a0634a88`. It is tempting to read that
+as the fan service — an earlier version of this note did — and it is wrong:
+
+- `0xC400008D` is `FFA_MSG_SEND_DIRECT_REQ2`, the FF-A direct-request call, not a fan id;
+- `0x8003` is `SPARK_FIRMWARE_PARTITION_ID` in `soc/uefi/include/FirmwareInventoryLayout.h` of the
+  recovered firmware source;
+- the constant is the low half of service UUID `884a63a0-3285-4120-83aa-eec008a0a546`, the
+  firmware-inventory service, whose command 12 reads the EC version at `0x06000760` and the PD versions at
+  `0x06000770`/`0x06000774`.
+
+So those calls are version reads by `FmpEndOfDxe` and `SmbiosType45Dxe`. Whether the ASUS image's fan path
+is live remains open, and it is not answered at `0x8003`.
+
+## The EC's own fan code is readable, and it explains the measurements
+
+The EC capsule has been recovered to source and rebuilt byte-identically
+(`christopherowen/spark-open-firmware`, `ec/ecfw/src/thermal/thermalmgmt.c`). Its constants:
+
+| constant | value |
+| --- | --- |
+| running duty range | 14 – 100 percent |
+| slew | rises at most 10 per pass, falls by one, settled within 2 percent |
+| publish threshold | 5 percent change |
+| CPU fan | 1260 – 9000 rpm |
+| rear fan | 1890 – 13500 rpm |
+| absent host clamp | `0xFFFF` |
+
+`thermal_update_fan_rpm()` computes the published speed from the duty —
+`rpm = (duty-14)/(100-14)*(max-min) + min` — and publishes 0 below duty 14, on a zero tachometer, or on a
+wrapping estimate. The tachometer never supplies the published value.
+
+The code and measurements establish separate facts; the read-timing explanation remains inference:
+
+- a first read after a gap answers 0 and the next carries an rpm — **[INFERENCE]**: this may reflect the
+  5 percent publish filter, but no poll or EC-pass timing trace connects the two observations;
+- a host floor stays pinned until reboot — nothing in this code clears a clamp;
+- a 13500 rpm request produced 8820/12420 — 13500 is `FAN_REAR_MAX_RPM`, and both numbers are estimates at
+  the resulting duty;
+- the ACPI `_FSL` scale (975…4350) is not the EC's scale (1260…9000, 1890…13500), so the two sides of the
+  interface never agreed.
+
+A published `_FST` value is therefore an estimate, not a measurement, and must not be presented as one.
+

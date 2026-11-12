@@ -39,6 +39,7 @@ void thermal_cooling_device_unregister(struct thermal_cooling_device *);
 
 #define pr_info(fmt, ...) do { (void)(fmt); } while (0)
 #define pr_warn(fmt, ...) do { (void)(fmt); } while (0)
+#define pr_err(fmt, ...) do { (void)(fmt); } while (0)
 
 #define MODULE_DESCRIPTION(text) extern const char *__stub_description
 #define MODULE_LICENSE(text) extern const char *__stub_license

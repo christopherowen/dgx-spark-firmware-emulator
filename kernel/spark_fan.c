@@ -34,6 +34,8 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/thermal.h>
+#include <linux/hwmon.h>
+#include <linux/platform_device.h>
 #include <linux/arm-smccc.h>
 #include <linux/errno.h>
 #endif
@@ -68,6 +70,12 @@ typedef unsigned long long spark_u64;
  * EC's clamps and no ACPI path restores them, so it stays off unless the module is loaded with
  * spark_fan.allow_pin=1. */
 static SPARK_FAN_KEEP bool allow_pin;
+/* A floor in rpm, written once at load.
+ *
+ * `_FSL`'s own scale is a *floor* that tops out at 4350 rpm (975 + 3375·level/100), which is why level
+ * 100 is not audible: the EC is free to run the fans wherever it likes above it. The transport carries
+ * the rpm as two little-endian bytes, so a higher floor can be asked for directly. 0 disables it. */
+static SPARK_FAN_KEEP unsigned int rpm_floor;
 static SPARK_FAN_KEEP bool warned;
 
 /** The request word \_SB.FAN0.WRB builds for a write. */
@@ -122,6 +130,9 @@ static SPARK_FAN_KEEP unsigned long spark_fan_best_level(const unsigned long *le
 #ifndef SPARK_FAN_HOST_TEST
 
 module_param(allow_pin, bool, 0444);
+module_param(rpm_floor, uint, 0444);
+MODULE_PARM_DESC(rpm_floor,
+		 "write this rpm as the fan floor once at load (0 = do not); the _FSL scale tops out at 4350 rpm");
 MODULE_PARM_DESC(allow_pin,
 		 "permit writing a level (pins the EC clamps; a reboot is the only way back)");
 
@@ -155,6 +166,29 @@ static int spark_fan_call(u64 request, u64 *value)
 static int spark_fan_write_bytes(unsigned command, unsigned value)
 {
 	return spark_fan_call(spark_fan_write_request(command, value), NULL);
+}
+
+/* Read one status id, and discard the first answer.
+ *
+ * Measured on a unit (2026-11-11, one unit): the first read after a gap is answered **zero** with a
+ * success completion code, and the second carries the rpm. That is why the cooling path never saw it —
+ * its `0x06000704` read was always the first call of a pair and its `0x06000706` read always the
+ * second — and why an earlier version of this module concluded that one id answers zero and the other
+ * carries the fan. Both ids carry the same reading; the zero was the warm-up.
+ */
+static int spark_fan_read_rpm(u32 id, unsigned *rpm)
+{
+	u64 answer = 0;
+	int rc;
+
+	for (int attempt = 0; attempt < 2; attempt++) {
+		answer = 0;
+		rc = spark_fan_call(spark_fan_read_request(id), &answer);
+		if (rc)
+			return rc;
+	}
+	*rpm = (unsigned)answer & 0xffff;
+	return 0;
 }
 
 static int spark_fan_set_level(unsigned long level)
@@ -201,12 +235,11 @@ static int spark_fan_get_cur_state(struct thermal_cooling_device *cdev,
 	(void)cdev;
 
 	for (unsigned i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) {
-		u64 answer = 0;
-		int ret = spark_fan_call(spark_fan_read_request(ids[i]), &answer);
+		unsigned rpm = 0;
 
-		if (ret)
+		if (spark_fan_read_rpm(ids[i], &rpm))
 			continue;      /* one id refusing does not make the other id's answer wrong */
-		levels[answered++] = spark_fan_level_for_rpm((unsigned)answer & 0xffff);
+		levels[answered++] = spark_fan_level_for_rpm(rpm);
 	}
 	if (!answered)
 		return -EIO;
@@ -237,18 +270,180 @@ static const struct thermal_cooling_device_ops spark_fan_ops = {
 
 static struct thermal_cooling_device *spark_fan_cdev;
 
+
+/* ---- hwmon: what fancontrol and pwmconfig actually need --------------------------------------
+ *
+ * Three facts from the measured write path (2026-11-11, one unit) shape this interface:
+ *
+ *   - the EC honours a level write and the value sticks;
+ *   - `cur_state` and RPM readback report the service's published estimate, not a physical
+ *     tachometer measurement, and can lag a setpoint by seconds;
+ *   - in manual mode `pwm1` reports what was asked for, while `fan*_input` reports that
+ *     estimate. A disagreement does not by itself establish a physical fan ramp.
+ *
+ * `pwm1_enable` is the ownership flag: 2 is "the supervisor is not driving", 1 is manual. Writing 2
+ * does **not** hand the EC's clamps back to the firmware — nothing in this interface can, because the
+ * pin ends only at reset — so 2 means "I have stopped writing", not "firmware is in control again".
+ * A reboot is the only restore, and the module's warning says so.
+ */
+#define SPARK_FAN_PWM_MAX 255
+static unsigned long spark_fan_setpoint = SPARK_FAN_LEVEL_MAX;
+static unsigned int spark_fan_pwm_enable = 2;
+
+static umode_t spark_fan_is_visible(const void *data, enum hwmon_sensor_types type, u32 attr,
+				    int channel)
+{
+	(void)data;
+	(void)channel;
+	switch (type) {
+	case hwmon_fan:
+		return attr == hwmon_fan_input ? 0444 : 0;
+	case hwmon_pwm:
+		if (attr == hwmon_pwm_input)
+			return 0644;
+		if (attr == hwmon_pwm_enable)
+			return 0644;
+		return 0;
+	default:
+		return 0;
+	}
+}
+
+static int spark_fan_hwmon_read(struct device *dev, enum hwmon_sensor_types type, u32 attr,
+				int channel, long *val)
+{
+	(void)dev;
+	switch (type) {
+	case hwmon_fan: {
+		u32 id = channel == 0 ? SPARK_FAN_COMMAND_STATUS0 : SPARK_FAN_COMMAND_STATUS1;
+		unsigned rpm = 0;
+
+		if (spark_fan_read_rpm(id, &rpm))
+			return -EIO;
+		*val = (long)rpm;
+		return 0;
+	}
+	case hwmon_pwm:
+		if (attr == hwmon_pwm_input) {
+			/* Manual: what was asked for. Otherwise: what the fans are actually at, scaled — a
+			 * supervisor that reads 255 while the firmware is idling the fans at 91 would think
+			 * something else is driving them to maximum. */
+			if (spark_fan_pwm_enable == 1) {
+				*val = (long)(spark_fan_setpoint * SPARK_FAN_PWM_MAX / SPARK_FAN_LEVEL_MAX);
+			} else {
+				unsigned long level = 0;
+
+				if (spark_fan_get_cur_state(NULL, &level))
+					return -EIO;
+				*val = (long)(level * SPARK_FAN_PWM_MAX / SPARK_FAN_LEVEL_MAX);
+			}
+			return 0;
+		}
+		if (attr == hwmon_pwm_enable) {
+			*val = (long)spark_fan_pwm_enable;
+			return 0;
+		}
+		return -EOPNOTSUPP;
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static int spark_fan_hwmon_write(struct device *dev, enum hwmon_sensor_types type, u32 attr,
+				 int channel, long val)
+{
+	unsigned long level;
+	int ret;
+	(void)dev;
+	(void)channel;
+
+	if (type != hwmon_pwm)
+		return -EOPNOTSUPP;
+	if (attr == hwmon_pwm_enable) {
+		if (val != 1 && val != 2)
+			return -EINVAL;
+		spark_fan_pwm_enable = (unsigned int)val;
+		return 0;
+	}
+	if (attr != hwmon_pwm_input)
+		return -EOPNOTSUPP;
+	if (val < 0 || val > SPARK_FAN_PWM_MAX)
+		return -EINVAL;
+	if (spark_fan_pwm_enable != 1)
+		return -EPERM;
+	/* The same guard the cooling device has: pwm1 must not become a way around `allow_pin`, or the
+	 * module's own promise — "writing a level pins the EC's clamps and no ACPI path restores them" —
+	 * would hold only for one of its two interfaces. */
+	if (!allow_pin) {
+		if (!warned) {
+			warned = true;
+			pr_warn("spark_fan: refusing to pin the fans; load with "
+				"spark_fan.allow_pin=1 and expect a reboot to undo it\n");
+		}
+		return -EPERM;
+	}
+	level = (unsigned long)val * SPARK_FAN_LEVEL_MAX / SPARK_FAN_PWM_MAX;
+	ret = spark_fan_set_level(level);
+	if (!ret)
+		spark_fan_setpoint = level;
+	return ret;
+}
+
+static const struct hwmon_ops spark_fan_hwmon_ops = {
+	.is_visible = spark_fan_is_visible,
+	.read = spark_fan_hwmon_read,
+	.write = spark_fan_hwmon_write,
+};
+
+static const struct hwmon_channel_info *const spark_fan_info[] = {
+	HWMON_CHANNEL_INFO(fan, HWMON_F_INPUT, HWMON_F_INPUT),
+	HWMON_CHANNEL_INFO(pwm, HWMON_PWM_INPUT | HWMON_PWM_ENABLE),
+	NULL
+};
+
+static const struct hwmon_chip_info spark_fan_chip = {
+	.ops = &spark_fan_hwmon_ops,
+	.info = spark_fan_info,
+};
+
+static struct device *spark_fan_hwmon;
+
 static int __init spark_fan_init(void)
 {
 	spark_fan_cdev = thermal_cooling_device_register("spark-fan", NULL, &spark_fan_ops);
 	if (IS_ERR(spark_fan_cdev))
 		return PTR_ERR(spark_fan_cdev);
-	pr_info("spark_fan: level 0..100 over SMCCC %#lx (endpoint %#lx)\n",
-		(unsigned long)SPARK_FAN_FUNCTION, (unsigned long)SPARK_FAN_ENDPOINT);
+	spark_fan_hwmon = hwmon_device_register_with_info(&platform_bus, "spark_fan", NULL,
+							  &spark_fan_chip, NULL);
+	if (IS_ERR(spark_fan_hwmon)) {
+		pr_err("spark_fan: hwmon registration failed: %ld\n",
+		       (long)PTR_ERR(spark_fan_hwmon));
+		thermal_cooling_device_unregister(spark_fan_cdev);
+		return PTR_ERR(spark_fan_hwmon);
+	}
+	if (rpm_floor && !allow_pin) {
+		pr_warn("spark_fan: rpm_floor asked for %u rpm without allow_pin=1; refusing\n", rpm_floor);
+	} else if (rpm_floor) {
+		int ret = spark_fan_write_bytes(SPARK_FAN_COMMAND_BASE + 0, rpm_floor & 0xff);
+
+		if (!ret)
+			ret = spark_fan_write_bytes(SPARK_FAN_COMMAND_BASE + 1, (rpm_floor >> 8) & 0xff);
+		if (!ret)
+			ret = spark_fan_write_bytes(SPARK_FAN_COMMAND_BASE + 2, rpm_floor & 0xff);
+		if (!ret)
+			ret = spark_fan_write_bytes(SPARK_FAN_COMMAND_BASE + 3, (rpm_floor >> 8) & 0xff);
+		pr_info("spark_fan: rpm_floor %u -> %s\n", rpm_floor, ret ? "refused" : "written");
+	}
+	pr_info("spark_fan: level 0..100 over SMCCC %#lx (endpoint %#lx), hwmon pwm1 0..%d\n",
+		(unsigned long)SPARK_FAN_FUNCTION, (unsigned long)SPARK_FAN_ENDPOINT,
+		SPARK_FAN_PWM_MAX);
 	return 0;
 }
 
 static void __exit spark_fan_exit(void)
 {
+	if (!IS_ERR_OR_NULL(spark_fan_hwmon))
+		hwmon_device_unregister(spark_fan_hwmon);
 	if (!IS_ERR_OR_NULL(spark_fan_cdev))
 		thermal_cooling_device_unregister(spark_fan_cdev);
 }
