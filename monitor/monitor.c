@@ -605,6 +605,27 @@ void handle(u64 *r, u64 level) {
         } else if (ns_pending) {
             copy(nonsecure_context.r, sp_hvc_frame, 8);
             WRITE(SCR_EL3, SCR | 1);
+#ifdef MONITOR_TRACE
+            /* What is about to be returned to: the resume address is the one value a stall after
+             * the handover depends on, and the guest's own PC cannot be read once it is lost. */
+            console_puts("\nRELAY-OUT pc=");
+            hex(nonsecure_context.pc);
+            console_puts(" w=");
+            for (int i = 0; i < 8; i++) {
+                hex(nonsecure_context.r[i]);
+                console_puts(",");
+            }
+            /* Print the MM header/prefix to inspect framing, not a service verdict:
+             * this 32-byte capture does not reach the variable-service ReturnStatus. */
+            if (nonsecure_context.r[5] && guest_buffer(nonsecure_context.r[5], 32)) {
+                const unsigned char *b = (const unsigned char *)nonsecure_context.r[5];
+                console_puts(" buf=");
+                for (int i = 0; i < 32; i++) {
+                    hex(b[i]);
+                    console_puts(" ");
+                }
+            }
+#endif
             restore(&nonsecure_context, r);
             ns_pending = 0;
 #ifdef MONITOR_TRACE
@@ -898,9 +919,32 @@ void handle(u64 *r, u64 level) {
     }
     if (fid == DIRECT_REQ && ns && (r[1] & 0xffff) == 0x8004) {
         if (ns_pending || !sp_hvc_frame || r[1] >> 16) {
+#ifdef MONITOR_TRACE
+            console_puts("\nRELAY-REFUSED pending=");
+            hex(ns_pending);
+            console_puts(" frame=");
+            hex((u64)(unsigned long)sp_hvc_frame);
+            console_puts(" ep=");
+            hex(r[1]);
+            console_puts(" elr3=");
+            hex(READ(ELR_EL3));
+#endif
             unsupported(r);
             return;
         }
+#ifdef MONITOR_TRACE
+        console_puts("\nRELAY-IN ep=");
+        hex(r[1]);
+        console_puts(" elr3=");
+        hex(READ(ELR_EL3));
+        console_puts(" spsr3=");
+        hex(READ(SPSR_EL3));
+        console_puts(" w=");
+        for (int i = 0; i < 8; i++) {
+            hex(r[i]);
+            console_puts(",");
+        }
+#endif
         save(&nonsecure_context, r);
         ns_pending = 1;
         pending_direct = r[1];

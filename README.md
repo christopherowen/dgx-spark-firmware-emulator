@@ -82,7 +82,7 @@ In the order it is taken. Each row says what is measured today, not what is hope
 | The recovery installer's disk step | The profile backs `PCIF`'s ECAM at `0x29000000` and the declared ITS; both NVMe controllers enumerate. With `deferred_probe_timeout=1`, the installer completes `init_restore` on the target, and the restored disk hands off to its own `7.0.0-1019-nvidia` kernel under the vendor UEFI | Disk restoration and kernel handoff are measured; installed-root startup is a separate result in [the boot status](docs/boot-status.md) |
 | The second CPU | `AFFINITY_INFO` reports the modelled CPUs and `CPU_ON` releases the parked secondary with its entry and context. The two-CPU fixture checks the transition from off to on; `CPU_OFF` returns `DENIED` because CPUs are one-shot. The vendor platform description still activates one processor | A MADT and loader tag that agree with `--smp`; concurrent world switches remain unsupported |
 | The eSPI link and the SMMU | The fan service behind eSPI is modelled and was measured on hardware, but the eSPI bus itself is not, so no boot reaches it. The SMMU is a different gap: the profile backs all three declared windows with zero-returning apertures, so `arm-smmu-v3` fails its probe with `-ENXIO` instead of aborting the guest, and no address translation is performed | A boot that reaches eSPI, and the SMMU register protocol and translation, which are not modelled |
-| Vendor Linux without `efi=noruntime` | The kernel's `efisubsys_init` stalls in an FF-A direct-request loop the monitor never answers | A direct-request response in the monitor |
+| Vendor Linux without `efi=noruntime` | The monitor answers the two ROT services the firmware requests instead of leaving the loop unanswered, and the relay records both sides of every direct request | A runtime variable service whose reply shape is understood, and a guest that reaches it |
 
 A run whose guest left boot services no longer fails for a missing architectural-protocol table: that
 memory belongs to the guest once the payload calls `ExitBootServices`, so the record says the table was
@@ -120,6 +120,7 @@ needs the platform interfaces exercised by its firmware.
 - [QEMU profile and compatibility NIC](qemu/README.md)
 - [Monitor, flash, clock and entropy services](monitor/README.md)
 - [FF-A sharing and STMM's communication-buffer contract](docs/mm-sharing.md)
+- [The EFI runtime variable service: what fails, and the order to implement it](docs/runtime-variables.md)
 - [Development, diagnostics and hardware collection](docs/development.md)
 - [What the vendor capsule contains](docs/hardware-findings.md) — the component map's declared base, the FF-A
   manifests inside `STMM`/`FLASH`/`ESPI`, and why fifteen components are encrypted

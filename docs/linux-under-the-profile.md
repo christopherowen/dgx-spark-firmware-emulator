@@ -304,6 +304,23 @@ payload was supposed to fill, so `DATA_UUID` is empty and it exits on
 the flow needs from the vendor archive — `fastos-release.txt`, `efi.tar.xz`, `fastos.partaa`,
 `fastos.partab` — into a partition on a `virtio-scsi` disk.
 
+## The FF-A direct-request loop is the secure world's, not the kernel's
+
+The loader passes `efi=noruntime` because an earlier note said the kernel's `efisubsys_init` spins in an
+FF-A direct-request loop. With the monitor's relay now logging both sides of every direct request, and
+the flag removed for one run, that premise does not hold:
+
+- `efisubsys_init` **returns 0 in one millisecond** — no spin;
+- the boot still reaches userspace (`--- FastOS Version`), so the flag is not what saves it;
+- the requests that do loop carry `x1 = 3` — no modelled endpoint — and come from the **secure world**
+  (`SMC … ns=0x0`, `elr=0x93a7e168`), in 640 identical pairs of which 466 are answered;
+- EFI variables still do not work either way: the initramfs reports
+  `mount: mounting none on /sys/firmware/efi/efivars failed: Operation not supported`.
+
+So the flag is a no-op with a stale justification rather than a workaround. What actually gates EFI
+variables is the firmware's runtime variable service, which is reached through an endpoint this
+monitor does not serve — the same gap, now named precisely instead of hidden behind a flag.
+
 ## The installed disk boots to the installed kernel under the vendor UEFI
 
 After `init_restore` completed (37 GB root, `e2fsck`, `resize2fs`, new UUID, fstab and `grub.cfg`

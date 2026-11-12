@@ -139,6 +139,24 @@ It remains useful for SEC/DXE entry checks and explicit failure scenarios;
 its continuations are not the full-boot runner.
 ## Remaining platform limits and evidence boundaries
 
+### ROT request capture is not a reconstructed security service
+
+The captured `0x29` request is `0x00000129 0x90000000`; `0x12` is
+`0x00000312 0x90000000 0x00000001 0xfcc40d97`, followed by the same request
+with `0xb6db6764` as its last word. The leading count interpretation and a
+checksum/digest interpretation of the varying word are **[INFERENCE]**.
+`--rot-functional` supplies status 0 and no payload. The only established
+reply property is **"status 0 is accepted"** on the observed boot path;
+the complete reply shape and security semantics remain **unverified**.
+Paired hardware ROT request/reply and pointed-memory captures, plus the
+caller's post-reply loads/branches (or an authoritative specification),
+would settle this. See [the raw shape and closure requirements](runtime-variables.md#the-request-shape-as-far-as-the-captures-support-it).
+
+Retained `20261111T093421.135412Z/qemu.log` lines 40–41 and 106–117
+contain the transport capture (host diagnostics, **not UART lines**);
+additional `0x12` calls use third word `2` and last word `0x64a0ea5f`.
+The short examples above are not an exhaustive per-boot call count.
+
 ### Three declared SMMUs, not three modelled SMMUs
 
 The IORT record, [research/smmu-iort.json](../research/smmu-iort.json),

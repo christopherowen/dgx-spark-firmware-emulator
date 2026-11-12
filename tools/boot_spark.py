@@ -212,7 +212,7 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
         program_model=None, code_offset_source="not-sliced", trace_pc=None, trace_limit=0, trace_sample=0,
         trace_start=0, trace_exceptions=False,
         extended_ram=False, nvme_images=None, qmp_path=None, console_script=None,
-        console_after=0.0, console_delay=0.03, usb_image=None,
+        console_after=0.0, console_delay=0.03, usb_image=None, rot_functional=False,
         no_setup_escape=False):
     qemu = shutil.which(qemu)
     if qemu is None:
@@ -293,7 +293,7 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
                           stop_after_boots=stop_after_boots, program_model=program_model,
                           code_offset_source=code_offset_source, qmp_path=qmp_path,
                           console_script=console_script, console_after=console_after,
-                          no_setup_escape=no_setup_escape,
+                          rot_functional=rot_functional, no_setup_escape=no_setup_escape,
                           console_delay=console_delay, usb_image=usb_image,
                           trace_pc=trace_pc, trace_limit=trace_limit, trace_sample=trace_sample,
                           trace_start=trace_start, trace_exceptions=trace_exceptions,
@@ -312,7 +312,7 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                code_offset_source="not-sliced", trace_pc=None, trace_limit=0, trace_sample=0,
                trace_start=0, trace_exceptions=False,
                extended_ram=False, nvme_images=None, qmp_path=None, console_script=None,
-               console_after=0.0, console_delay=0.03, usb_image=None,
+               console_after=0.0, console_delay=0.03, usb_image=None, rot_functional=False,
                no_setup_escape=False):
     firmware_directory = prepared_directory(firmware_version)
     if firmware_path is None:
@@ -373,7 +373,8 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
         # NVMe probing deferred in the recovery boot but completed at its timeout; the capture
         # does not establish missing ITS as the cause or a permanent wait. No supplier links
         # were present, and the SMMU was ruled out as the dependency.
-        command = [qemu, "-M", "virt,spark-fw-lab=on,spark-rot-error-replies=on,"
+        rot = "spark-rot-functional=on" if rot_functional else "spark-rot-error-replies=on"
+        command = [qemu, "-M", "virt,spark-fw-lab=on," + rot + ","
                    "gic-version=3,virtualization=on,secure=on,its=on", "-accel", "tcg",
                    "-cpu", "max,sve=off,sme=off,pauth=off",
                    "-m", memory or "2G", "-smp", str(smp or 1),
@@ -1071,6 +1072,9 @@ def main():
     parser.add_argument("--no-setup-escape", action="store_true",
                         help="do not send ESC at the firmware's boot prompt: on AMI that key enters "
                              "Setup rather than dismissing the prompt")
+    parser.add_argument("--rot-functional", action="store_true",
+                        help="answer the ROT services the firmware calls with their success status "
+                             "instead of refusing them; a functional model that authenticates nothing")
     parser.add_argument("--qmp-alive", type=Path, metavar="PATH",
                         help="put the QMP socket at PATH for emulator inspection while the run "
                              "continues; QMP keyboard events do not type into the serial console")
@@ -1237,6 +1241,7 @@ def main():
                         extended_ram=args.extended_ram,
                         nvme_images=args.nvme_image, qmp_path=args.qmp_alive,
                         console_script=args.console_script, console_after=args.console_after,
+                        rot_functional=args.rot_functional,
                         no_setup_escape=args.no_setup_escape,
                         usb_image=args.usb_image,
                         accept_mmap_notify=args.accept_mmap_notify,

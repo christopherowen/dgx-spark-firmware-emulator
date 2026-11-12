@@ -1,56 +1,5 @@
-diff --git a/include/hw/arm/virt.h b/include/hw/arm/virt.h
---- a/include/hw/arm/virt.h
-+++ b/include/hw/arm/virt.h
-@@ -159,6 +159,17 @@
-     bool hvf_no_kernel_irqchip_default;
- };
- 
-+/* Experimental polled ROT transport; service payloads are not implemented. */
-+typedef struct SparkRotMailbox {
-+    MemoryRegion iomem;
-+    uint32_t tx[16];
-+    unsigned tx_count;
-+    uint32_t reply;
-+    bool reply_pending;
-+    bool ack_pending;
-+    bool reply_consumed;
-+} SparkRotMailbox;
-+
- struct VirtMachineState {
-     MachineState parent;
-     Notifier machine_done;
-@@ -166,6 +177,30 @@
-     FWCfgState *fw_cfg;
-     PFlashCFI01 *flash[2];
-     bool secure;
-+    bool spark_fw_lab;
-+    bool spark_rot_error_replies;
-+    SparkRotMailbox spark_rot[2];
-+    MemoryRegion spark_ecam;
-+    MemoryRegion spark_pcif;
-+    uint8_t spark_root_config[16][4096];
-+    MemoryRegion spark_pcie_cfg[36];
-+    uint8_t spark_pcie_cfgregs[36][0x10000];
-+    MemoryRegion spark_boardcfg;
-+    uint32_t spark_boardregs[1024];
-+    MemoryRegion spark_fuse;
-+    uint32_t spark_fuse_regs[0x10000 / 4];
-+    MemoryRegion spark_pcie_syscfg;
-+    uint32_t spark_pcie_sysregs[1024];
-+    MemoryRegion spark_usb_config[36];
-+    uint32_t spark_usb_regs[36][0x20000 / 4];
-+    MemoryRegion spark_boot_sram;
-+    MemoryRegion spark_boot_sram_secure;
-+    MemoryRegion spark_eint_mmio;
-+    MemoryRegion spark_eint_banks[4];
-+    uint32_t spark_eint[4][1024];
-+    qemu_irq spark_eint_irq;
-+    MemoryRegion spark_gpio_mmio[11];
-+    uint32_t spark_gpio[11][256];
-     bool highmem;
-     bool highmem_compact;
-     bool highmem_cxl;
 diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index 219597c..64658c8 100644
 --- a/hw/arm/virt.c
 +++ b/hw/arm/virt.c
 @@ -29,6 +29,8 @@
@@ -78,7 +27,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
  #include "hw/core/cpu.h"
  #include "hw/cxl/cxl.h"
  #include "hw/cxl/cxl_host.h"
-@@ -1291,7 +1295,8 @@
+@@ -1291,7 +1295,8 @@ static void gic_connect_ppis(VirtMachineState *vms)
  
      for (int i = 0; i < smp_cpus; i++) {
          DeviceState *cpudev = DEVICE(qemu_get_cpu(i));
@@ -88,7 +37,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
          /*
           * Mapping from the output timer irq lines from the CPU to the
           * GIC PPI inputs we use for the virt board.
-@@ -1419,7 +1424,9 @@
+@@ -1419,7 +1424,9 @@ static void create_gicv3(VirtMachineState *vms, MemoryRegion *mem)
       * Note that the num-irq property counts both internal and external
       * interrupts; there are always 32 of the former (mandated by GIC spec).
       */
@@ -99,7 +48,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      if (!kvm_irqchip_in_kernel() && !hvf_irqchip_in_kernel()) {
          qdev_prop_set_bit(vms->gic, "has-security-extensions", vms->secure);
      }
-@@ -1461,6 +1468,9 @@
+@@ -1461,6 +1468,9 @@ static void create_gicv3(VirtMachineState *vms, MemoryRegion *mem)
          sysbus_mmio_map(gicbusdev, 2, vms->memmap[VIRT_HIGH_GIC_REDIST2].base);
      }
  
@@ -109,7 +58,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      gic_connect_ppis(vms);
  
      fdt_add_gic_node(vms);
-@@ -1500,6 +1510,45 @@
+@@ -1500,6 +1510,45 @@ static void create_msi_controller(VirtMachineState *vms)
      }
  }
  
@@ -155,7 +104,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
  static void create_uart(const VirtMachineState *vms, int uart,
                          MemoryRegion *mem, Chardev *chr, bool secure)
  {
-@@ -1513,6 +1562,29 @@
+@@ -1513,6 +1562,29 @@ static void create_uart(const VirtMachineState *vms, int uart,
      SysBusDevice *s = SYS_BUS_DEVICE(dev);
      MachineState *ms = MACHINE(vms);
  
@@ -185,7 +134,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      qdev_prop_set_chr(dev, "chardev", chr);
      sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
      memory_region_add_subregion(mem, base,
-@@ -2198,6 +2270,37 @@
+@@ -2198,6 +2270,37 @@ static void create_pcie(VirtMachineState *vms)
                                      high_mmio_alias);
      }
  
@@ -223,7 +172,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      /* Map IO port space */
      sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, base_pio);
  
-@@ -2526,6 +2629,509 @@
+@@ -2526,6 +2629,534 @@ static void virt_set_high_memmap(VirtMachineState *vms,
      }
  }
  
@@ -453,6 +402,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +                            unsigned size)
 +{
 +    SparkRotMailbox *m = opaque;
++    bool functional = m->functional;
 +    switch (addr) {
 +    case 0x10: /* transmit FIFO */
 +        if (m->tx_count < ARRAY_SIZE(m->tx)) {
@@ -471,9 +421,33 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +            m->reply = (m->tx[0] & 0xff) | (1 << 12);
 +            m->reply_pending = m->ack_pending = true;
 +            m->reply_consumed = false;
-+            qemu_log_mask(LOG_UNIMP,
-+                          "spark ROT: service 0x%x unavailable; explicit error reply\n",
-+                          m->tx[0] & 0xff);
++            /* The whole message, not just the service id: the reply this transport sends is a
++             * refusal, so a capture of the request is the only record of what the caller asked
++             * for. Reconstructing a service from its own refused requests is the only sound way
++             * to implement one, and guessing at it once crashed the firmware. */
++            {
++                GString *message = g_string_new(NULL);
++                for (unsigned word = 0; word < m->tx_count; word++) {
++                    g_string_append_printf(message, "%s0x%08x", word ? " " : "", m->tx[word]);
++                }
++                qemu_log_mask(LOG_UNIMP,
++                              "spark ROT: service 0x%x refused; request[%u] = %s\n",
++                              m->tx[0] & 0xff, m->tx_count, message->str);
++                g_string_free(message, true);
++            }
++            if (functional) {
++                /* Only the services a capture shows the firmware calling are answered, and the
++                 * answer carries no authentication: it exists so the caller's own code path can
++                 * run to its next step instead of stopping here. */
++                unsigned service = m->tx[0] & 0xff;
++                if (service == 0x29 || service == 0x12) {
++                    m->reply = service; /* status 0: succeeded, no payload words */
++                    qemu_log_mask(LOG_UNIMP, "spark ROT: service 0x%x answered functionally\n",
++                                  service);
++                } else {
++                    m->reply = service | (1 << 12);
++                }
++            }
 +            m->tx_count = 0;
 +        } else {
 +            qemu_log_mask(LOG_GUEST_ERROR, "spark ROT: invalid doorbell/FIFO state\n");
@@ -733,7 +707,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
  static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
  {
      MachineState *ms = MACHINE(vms);
-@@ -2538,6 +3063,214 @@
+@@ -2538,6 +3169,215 @@ static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
          vms->memmap[i] = base_memmap[i];
      }
  
@@ -820,8 +794,9 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +            memory_region_add_subregion(get_system_memory(), eint_bases[bank],
 +                                       &vms->spark_eint_banks[bank]);
 +        }
-+        if (vms->spark_rot_error_replies) {
++        if (vms->spark_rot_functional || vms->spark_rot_error_replies) {
 +            for (unsigned i = 0; i < ARRAY_SIZE(vms->spark_rot); i++) {
++                vms->spark_rot[i].functional = vms->spark_rot_functional;
 +                memory_region_init_io(&vms->spark_rot[i].iomem, OBJECT(vms),
 +                                      &spark_rot_ops, &vms->spark_rot[i],
 +                                      "spark-rot-error-transport", 0x1000);
@@ -948,7 +923,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      if (ms->ram_slots > ACPI_MAX_RAM_SLOTS) {
          error_report("unsupported number of memory slots: %"PRIu64,
                       ms->ram_slots);
-@@ -2943,6 +3665,21 @@
+@@ -2943,6 +3783,21 @@ static void machvirt_init(MachineState *machine)
      firmware_loaded = virt_firmware_init(vms, sysmem,
                                           secure_sysmem ?: sysmem);
  
@@ -970,7 +945,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      /* If we have an EL3 boot ROM then the assumption is that it will
       * implement PSCI itself, so disable QEMU's internal implementation
       * so it doesn't get in the way. Instead of starting secondary
-@@ -3264,6 +4001,26 @@
+@@ -3264,6 +4119,36 @@ static void machvirt_init(MachineState *machine)
      qemu_add_machine_init_done_notifier(&vms->machine_done);
  }
  
@@ -994,10 +969,20 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +    VIRT_MACHINE(obj)->spark_rot_error_replies = value;
 +}
 +
++static bool virt_get_spark_rot_functional(Object *obj, Error **errp)
++{
++    return VIRT_MACHINE(obj)->spark_rot_functional;
++}
++
++static void virt_set_spark_rot_functional(Object *obj, bool value, Error **errp)
++{
++    VIRT_MACHINE(obj)->spark_rot_functional = value;
++}
++
  static bool virt_get_secure(Object *obj, Error **errp)
  {
      VirtMachineState *vms = VIRT_MACHINE(obj);
-@@ -4213,6 +4970,15 @@
+@@ -4213,6 +5098,21 @@ static void virt_machine_class_init(ObjectClass *oc, const void *data)
          NULL, NULL);
      object_class_property_set_description(oc, "acpi",
          "Enable ACPI");
@@ -1006,6 +991,12 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +                                   virt_set_spark_rot_error_replies);
 +    object_class_property_set_description(oc, "spark-rot-error-replies",
 +        "Opt-in ROT transport failure scenario; unavailable services return errors");
++    object_class_property_add_bool(oc, "spark-rot-functional",
++                                   virt_get_spark_rot_functional,
++                                   virt_set_spark_rot_functional);
++    object_class_property_set_description(oc, "spark-rot-functional",
++        "Answer the ROT services the firmware calls with their success status; a functional "
++        "model only, which authenticates nothing");
 +    object_class_property_add_bool(oc, "spark-fw-lab", virt_get_spark_fw_lab,
 +                                   virt_set_spark_fw_lab);
 +    object_class_property_set_description(oc, "spark-fw-lab",
@@ -1014,9 +1005,10 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
                                     virt_set_secure);
      object_class_property_set_description(oc, "secure",
 diff --git a/hw/net/meson.build b/hw/net/meson.build
+index 84f142d..5644651 100644
 --- a/hw/net/meson.build
 +++ b/hw/net/meson.build
-@@ -12,7 +12,7 @@
+@@ -12,7 +12,7 @@ system_ss.add(when: 'CONFIG_E1000E_PCI_EXPRESS', if_true: files('net_tx_pkt.c',
  system_ss.add(when: 'CONFIG_E1000E_PCI_EXPRESS', if_true: files('e1000e.c', 'e1000e_core.c', 'e1000x_common.c'))
  system_ss.add(when: 'CONFIG_IGB_PCI_EXPRESS', if_true: files('net_tx_pkt.c', 'net_rx_pkt.c'))
  system_ss.add(when: 'CONFIG_IGB_PCI_EXPRESS', if_true: files('igb.c', 'igbvf.c', 'igb_core.c'))
@@ -1025,35 +1017,9 @@ diff --git a/hw/net/meson.build b/hw/net/meson.build
  system_ss.add(when: 'CONFIG_TULIP', if_true: files('tulip.c'))
  system_ss.add(when: 'CONFIG_VMXNET3_PCI', if_true: files('net_tx_pkt.c', 'net_rx_pkt.c'))
  system_ss.add(when: 'CONFIG_VMXNET3_PCI', if_true: files('vmxnet3.c'))
-diff --git a/target/arm/tcg/op_helper.c b/target/arm/tcg/op_helper.c
---- a/target/arm/tcg/op_helper.c
-+++ b/target/arm/tcg/op_helper.c
-@@ -26,6 +26,7 @@
- #include "accel/tcg/cpu-loop.h"
- #include "accel/tcg/probe.h"
- #include "cpregs.h"
-+#include "qemu/log.h"
- 
- #define SIGNBIT (uint32_t)0x80000000
- #define SIGNBIT64 ((uint64_t)1 << 63)
-@@ -1106,6 +1107,15 @@
-     }
- 
-  fail:
-+    if (res == CP_ACCESS_TRAP_EL3) {
-+        /* A trap to EL3 from EL0/EL1 with no obvious cause is worth naming: the register, the
-+         * function that refused it, and the controls that could have. */
-+        qemu_log_mask(LOG_UNIMP,
-+                      "cpreg %s trapped to EL3 from EL%d: scr=0x%" PRIx64
-+                      " cptr3=0x%" PRIx64 " hcr=0x%" PRIx64 " hcrx=0x%" PRIx64 "\n",
-+                      ri->name, arm_current_el(env), env->cp15.scr_el3,
-+                      env->cp15.cptr_el[3], arm_hcr_el2_eff(env), arm_hcrx_el2_eff(env));
-+    }
-     excp = EXCP_UDEF;
-     switch (res) {
-         /* CP_ACCESS_TRAP* traps are always direct to a specified EL */
 diff --git a/hw/net/spark-rtl8168.c b/hw/net/spark-rtl8168.c
 new file mode 100644
+index 0000000..40a46c3
 --- /dev/null
 +++ b/hw/net/spark-rtl8168.c
 @@ -0,0 +1,364 @@
@@ -1421,3 +1387,86 @@ new file mode 100644
 +};
 +static void rtl_register_types(void) { type_register_static(&rtl_type); }
 +type_init(rtl_register_types);
+diff --git a/include/hw/arm/virt.h b/include/hw/arm/virt.h
+index 22e66d1..c7c2b6f 100644
+--- a/include/hw/arm/virt.h
++++ b/include/hw/arm/virt.h
+@@ -159,6 +159,18 @@ struct VirtMachineClass {
+     bool hvf_no_kernel_irqchip_default;
+ };
+ 
++/* Experimental polled ROT transport; service payloads are not implemented. */
++typedef struct SparkRotMailbox {
++    MemoryRegion iomem;
++    uint32_t tx[16];
++    unsigned tx_count;
++    uint32_t reply;
++    bool reply_pending;
++    bool ack_pending;
++    bool reply_consumed;
++    bool functional; /* answer the services the firmware calls instead of refusing them */
++} SparkRotMailbox;
++
+ struct VirtMachineState {
+     MachineState parent;
+     Notifier machine_done;
+@@ -166,6 +178,31 @@ struct VirtMachineState {
+     FWCfgState *fw_cfg;
+     PFlashCFI01 *flash[2];
+     bool secure;
++    bool spark_fw_lab;
++    bool spark_rot_error_replies;
++    bool spark_rot_functional;
++    SparkRotMailbox spark_rot[2];
++    MemoryRegion spark_ecam;
++    MemoryRegion spark_pcif;
++    uint8_t spark_root_config[16][4096];
++    MemoryRegion spark_pcie_cfg[36];
++    uint8_t spark_pcie_cfgregs[36][0x10000];
++    MemoryRegion spark_boardcfg;
++    uint32_t spark_boardregs[1024];
++    MemoryRegion spark_fuse;
++    uint32_t spark_fuse_regs[0x10000 / 4];
++    MemoryRegion spark_pcie_syscfg;
++    uint32_t spark_pcie_sysregs[1024];
++    MemoryRegion spark_usb_config[36];
++    uint32_t spark_usb_regs[36][0x20000 / 4];
++    MemoryRegion spark_boot_sram;
++    MemoryRegion spark_boot_sram_secure;
++    MemoryRegion spark_eint_mmio;
++    MemoryRegion spark_eint_banks[4];
++    uint32_t spark_eint[4][1024];
++    qemu_irq spark_eint_irq;
++    MemoryRegion spark_gpio_mmio[11];
++    uint32_t spark_gpio[11][256];
+     bool highmem;
+     bool highmem_compact;
+     bool highmem_cxl;
+diff --git a/target/arm/tcg/op_helper.c b/target/arm/tcg/op_helper.c
+index c4433be..273f270 100644
+--- a/target/arm/tcg/op_helper.c
++++ b/target/arm/tcg/op_helper.c
+@@ -26,6 +26,7 @@
+ #include "accel/tcg/cpu-loop.h"
+ #include "accel/tcg/probe.h"
+ #include "cpregs.h"
++#include "qemu/log.h"
+ 
+ #define SIGNBIT (uint32_t)0x80000000
+ #define SIGNBIT64 ((uint64_t)1 << 63)
+@@ -1106,6 +1107,15 @@ const void *HELPER(access_check_cp_reg)(CPUARMState *env, uint32_t key,
+     }
+ 
+  fail:
++    if (res == CP_ACCESS_TRAP_EL3) {
++        /* A trap to EL3 from EL0/EL1 with no obvious cause is worth naming: the register, the
++         * function that refused it, and the controls that could have. */
++        qemu_log_mask(LOG_UNIMP,
++                      "cpreg %s trapped to EL3 from EL%d: scr=0x%" PRIx64
++                      " cptr3=0x%" PRIx64 " hcr=0x%" PRIx64 " hcrx=0x%" PRIx64 "\n",
++                      ri->name, arm_current_el(env), env->cp15.scr_el3,
++                      env->cp15.cptr_el[3], arm_hcr_el2_eff(env), arm_hcrx_el2_eff(env));
++    }
+     excp = EXCP_UDEF;
+     switch (res) {
+         /* CP_ACCESS_TRAP* traps are always direct to a specified EL */
