@@ -109,8 +109,11 @@ captures to commits, releases, issues or CI artifacts. See
 The lab executes real UEFI and MM using a synthetic loader/monitor environment.
 Earlier silicon boot stages, GPU and physical NIC firmware, production security
 services, secure stage-2 isolation, migration and reset paths beyond the modelled
-watchdog are outside the verified result. IPv6/HTTP boot, Secure Boot image acceptance and OS boot remain
-untested. Some board/SMBIOS fields are placeholders.
+watchdog are outside the verified result. IPv6/HTTP boot and a manufacturer's
+provisioned Secure Boot policy remain untested. The installed Linux image and
+[lab-key Secure Boot chain](docs/linux-under-the-profile.md#lab-platform-secure-boot-provisioning)
+are exercised separately; that does not authenticate earlier silicon boot
+stages. Some board/SMBIOS fields are placeholders.
 
 QEMU is the backend for the SoC/UEFI path. Extending it to isolated controllers
 requires identifying their ISA and load contract. A complete Spark model also
