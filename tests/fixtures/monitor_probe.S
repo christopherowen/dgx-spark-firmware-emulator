@@ -8,6 +8,18 @@ _start:
     msr cpacr_el1, x0
     mov x0, #0xabc
     msr tpidr_el1, x0
+    /* Legacy executable pages: a normal-world PIE leak must not reinterpret them. */
+    adr x0, secure_table
+    msr ttbr0_el1, x0
+    mov x0, #0xff
+    msr mair_el1, x0
+    ldr x0, =0x800019             /* EPD1, 39-bit TTBR0 VA, 4 KiB granule */
+    msr tcr_el1, x0
+    isb
+    mrs x0, sctlr_el1
+    orr x0, x0, #1
+    msr sctlr_el1, x0
+    isb
     movi v0.2d, #0
     ldr x0, =0x8400006b
     hvc #0
@@ -19,6 +31,20 @@ secure_request:
     movi v0.2d, #0xff
     hvc #0
     b secure_request
+    .balign 4096
+secure_table:
+    .quad 0, 0, secure_l2 + 3  /* L1[2]: the 0x80000000 VA range. */
+    .space 4096 - 24
+secure_l2:
+    .space 157 * 8
+    .quad secure_l3 + 3        /* L2[157]: 0x93a00000..0x93bfffff. */
+    .space 4096 - 158 * 8
+secure_l3:
+    .set secure_page, 0x93a00703
+    .rept 512
+    .quad secure_page           /* 4 KiB identity pages, AF=1, legacy executable permissions. */
+    .set secure_page, secure_page + 4096
+    .endr
 #else
     mov x0, #0xdef
     msr tpidr_el1, x0
@@ -184,6 +210,22 @@ psci_basics:
     smc #0
     cmp x0, #3
     b.ne fail
+    /* Model the installed kernel enabling stage-1 permission indirection in both regimes.
+     * Index zero denies access, so leaking PIE into the secure legacy mapping faults on return. */
+    mov x0, #0x4000
+    msr S3_4_C1_C2_2, x0        /* HCRX_EL2.TCR2En makes the EL1 control effective. */
+    mov x0, #2
+    msr S3_0_C2_C0_3, x0        /* TCR2_EL1.PIE */
+    msr S3_4_C2_C0_3, x0        /* TCR2_EL2.PIE */
+    mov x0, #0x1230
+    msr S3_0_C10_C2_3, x0       /* PIR_EL1 */
+    mov x0, #0x4560
+    msr S3_4_C10_C2_3, x0       /* PIR_EL2 */
+    mov x0, #0x7890
+    msr S3_0_C10_C2_2, x0       /* PIRE0_EL1 */
+    mov x0, #0xabc0
+    msr S3_4_C10_C2_2, x0       /* PIRE0_EL2 */
+    isb
     /* Two real EL3/S-EL2/NS-EL2 world switches must preserve FP and TLS. */
     mov x19, #2
 request:
@@ -204,6 +246,31 @@ request:
     b.ne fail
     umov x5, v0.d[0]
     cbnz x5, fail
+    mrs x5, S3_0_C2_C0_3
+    cmp x5, #2
+    b.ne fail
+    mrs x5, S3_4_C2_C0_3
+    cmp x5, #2
+    b.ne fail
+    mrs x5, S3_0_C10_C2_3
+    mov x6, #0x1230
+    cmp x5, x6
+    b.ne fail
+    mrs x5, S3_4_C10_C2_3
+    mov x6, #0x4560
+    cmp x5, x6
+    b.ne fail
+    mrs x5, S3_0_C10_C2_2
+    mov x6, #0x7890
+    cmp x5, x6
+    b.ne fail
+    mrs x5, S3_4_C10_C2_2
+    mov x6, #0xabc0
+    cmp x5, x6
+    b.ne fail
+    mrs x5, S3_4_C1_C2_2
+    cmp x5, #4, lsl #12
+    b.ne fail
     subs x19, x19, #1
     b.ne request
     /* A timer output must reach PPI 30 in the enlarged GIC. */

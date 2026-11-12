@@ -102,10 +102,14 @@ struct context {
     u64 CNTKCTL_EL1;
     u64 CNTHCTL_EL2;
     u64 CONTEXTIDR_EL1;
+    u64 TCR2_EL1, TCR2_EL2;
+    u64 PIR_EL1, PIRE0_EL1, PIR_EL2, PIRE0_EL2;
+    u64 HCRX_EL2;
     u64 fp[66] __attribute__((aligned(16)));
 };
 static struct context secure_context, nonsecure_context;
 static int ns_started, ns_pending;
+static int has_tcr2, has_s1pie, has_hcrx;
 /* Which direct request is waiting for the secure world, so its answer can be logged as a pair
  * with the question it answers. Only meaningful under MONITOR_TRACE. */
 static u64 pending_direct;
@@ -131,6 +135,52 @@ static int guest_buffer(u64 address, u64 size) {
 extern void enter(u64 ignored, u64 arg0);
 extern void save_fp(u64 *p);
 extern void restore_fp(u64 *p);
+#ifdef MONITOR_TRACE
+static void trace_context(const char *operation, const struct context *c) {
+    console_puts("\nCTX ");
+    console_puts(operation);
+    console_puts(c == &secure_context ? " secure" : " nonsecure");
+    console_puts(" scr=");
+    hex(READ(SCR_EL3));
+    console_puts(" pc=");
+    hex(c->pc);
+    console_puts(" pstate=");
+    hex(c->pstate);
+    console_puts(" vbar1=");
+    hex(c->VBAR_EL1);
+    console_puts(" live_vbar1=");
+    hex(READ(VBAR_EL1));
+    console_puts(" vbar2=");
+    hex(c->VBAR_EL2);
+    console_puts(" sctlr1=");
+    hex(c->SCTLR_EL1);
+    console_puts(" tcr1=");
+    hex(c->TCR_EL1);
+    console_puts(" ttbr0=");
+    hex(c->TTBR0_EL1);
+    console_puts(" hcr2=");
+    hex(c->HCR_EL2);
+    console_puts(" tcr2_el1=");
+    hex(c->TCR2_EL1);
+    console_puts(" live_tcr2_el1=");
+    hex(has_tcr2 ? READ(S3_0_C2_C0_3) : 0);
+    console_puts(" tcr2_el2=");
+    hex(c->TCR2_EL2);
+    console_puts(" live_tcr2_el2=");
+    hex(has_tcr2 ? READ(S3_4_C2_C0_3) : 0);
+    console_puts(" pir1=");
+    hex(c->PIR_EL1);
+    console_puts(" pire0_1=");
+    hex(c->PIRE0_EL1);
+    console_puts(" pir2=");
+    hex(c->PIR_EL2);
+    console_puts(" pire0_2=");
+    hex(c->PIRE0_EL2);
+    console_puts(" hcrx=");
+    hex(c->HCRX_EL2);
+    console_puts("\n");
+}
+#endif
 static void save(struct context *c, u64 *r) {
     save_fp(c->fp);
     copy(c->r, r, 31);
@@ -165,6 +215,23 @@ static void save(struct context *c, u64 *r) {
     c->CNTKCTL_EL1 = READ(CNTKCTL_EL1);
     c->CNTHCTL_EL2 = READ(CNTHCTL_EL2);
     c->CONTEXTIDR_EL1 = READ(CONTEXTIDR_EL1);
+    /* This QEMU model keeps one copy per EL, not per security state. Linux enables PIE;
+     * applying its permission indices to STMM's legacy descriptors denies execution on return. */
+    if (has_tcr2) {
+        c->TCR2_EL1 = READ(S3_0_C2_C0_3);
+        c->TCR2_EL2 = READ(S3_4_C2_C0_3);
+    }
+    if (has_s1pie) {
+        c->PIR_EL1 = READ(S3_0_C10_C2_3);
+        c->PIRE0_EL1 = READ(S3_0_C10_C2_2);
+        c->PIR_EL2 = READ(S3_4_C10_C2_3);
+        c->PIRE0_EL2 = READ(S3_4_C10_C2_2);
+    }
+    if (has_hcrx)
+        c->HCRX_EL2 = READ(S3_4_C1_C2_2);
+#ifdef MONITOR_TRACE
+    trace_context("save", c);
+#endif
 }
 static void restore(struct context *c, u64 *r) {
     WRITE(SCTLR_EL2, READ(SCTLR_EL2) & ~1UL);
@@ -177,6 +244,20 @@ static void restore(struct context *c, u64 *r) {
     WRITE(SPSR_EL1, c->SPSR_EL1);
     WRITE(ELR_EL2, c->ELR_EL2);
     WRITE(SPSR_EL2, c->SPSR_EL2);
+    /* Restore the permission interpretation and its tables while both MMUs are off. Do not
+     * mask the feature in SCR_EL3: the normal world's saved PIE configuration must survive. */
+    if (has_tcr2) {
+        WRITE(S3_0_C2_C0_3, c->TCR2_EL1);
+        WRITE(S3_4_C2_C0_3, c->TCR2_EL2);
+    }
+    if (has_s1pie) {
+        WRITE(S3_0_C10_C2_3, c->PIR_EL1);
+        WRITE(S3_0_C10_C2_2, c->PIRE0_EL1);
+        WRITE(S3_4_C10_C2_3, c->PIR_EL2);
+        WRITE(S3_4_C10_C2_2, c->PIRE0_EL2);
+    }
+    if (has_hcrx)
+        WRITE(S3_4_C1_C2_2, c->HCRX_EL2);
     WRITE(TTBR0_EL1, c->TTBR0_EL1);
     WRITE(TTBR1_EL1, c->TTBR1_EL1);
     WRITE(TCR_EL1, c->TCR_EL1);
@@ -205,6 +286,9 @@ static void restore(struct context *c, u64 *r) {
     copy(r, c->r, 31);
     WRITE(ELR_EL3, c->pc);
     WRITE(SPSR_EL3, c->pstate);
+#ifdef MONITOR_TRACE
+    trace_context("restore", c);
+#endif
 }
 static void yield(u64 *r, int response) {
     sp_hvc_frame = r;
@@ -255,6 +339,10 @@ void boot(void) {
     console_puts("\nMON: boot STMM\n");
     *(volatile u32 *)0x06880014 = 0;
     WRITE(SCR_EL3, SCR);
+    u64 mmfr3 = READ(S3_0_C0_C7_3);  /* ID_AA64MMFR3_EL1 */
+    has_tcr2 = (mmfr3 & 15) != 0;
+    has_s1pie = ((mmfr3 >> 8) & 15) != 0;
+    has_hcrx = ((READ(ID_AA64MMFR1_EL1) >> 40) & 15) != 0;
     WRITE(HCR_EL2, 1UL << 31);
     WRITE(CPTR_EL2, 0);
     WRITE(VBAR_EL2, READ(VBAR_EL3));

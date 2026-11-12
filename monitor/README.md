@@ -8,9 +8,19 @@ The monitor starts at EL3, boots the unchanged Spark Standalone MM package at
 `0x93a40000` in S-EL1, and then enters unchanged Spark UEFI at `0x80800000` in
 NS-EL2. A small S-EL2 dispatcher receives MM's HVC calls. EL3 switches between
 the suspended secure dispatcher and UEFI for MM direct messages. General,
-FP/SIMD, translation and basic EL1/EL2 context are saved per world. The runner
-disables SVE, SME and pointer authentication; this context implementation does
-not support those extensions or multiple CPUs.
+FP/SIMD, translation and basic EL1/EL2 context are saved per world, including the
+optional TCR2, stage-1 PIR/PIRE0 and HCRX state. This QEMU model keeps one copy
+per EL, not per security state: leaking Linux's PIE controls into STMM changes
+how its legacy page descriptors are interpreted. Optional register support is
+discovered once on the profile's `max` CPU (which supplies MMFR3); the secure
+state is restored without disabling the normal world's features.
+The runner disables SVE, SME and pointer authentication; this context
+implementation does not support those extensions or concurrent world switches.
+The permission-state regression does not cover GCS (GCSCR/GCSCRE0/GCSPR),
+fine-grained trap registers, SCTLR2 or every optional timer/debug/PMU group;
+their independent preservation remains unverified. SCR access enables are
+not evidence of saved context. See the
+[remaining platform boundaries](../docs/boot-status.md#remaining-platform-limits-and-evidence-boundaries).
 
 Supported FF-A operations are the pinned image's version/identity discovery,
 one-page RX/TX mapping, MM partition discovery/release, direct MM requests,
@@ -61,8 +71,9 @@ firmware research lab. Use a new QEMU process for each cold boot.
 
 The synthetic integration test executes original S-EL1 and NS-EL2 guests,
 checks MM discovery and bad mapping rejection, makes two world switches,
-checks FP/SIMD and thread-register preservation, TRNG discovery/bounds/bit
-packing/nonrepeating requests, and timer PPI 30.
+checks legacy secure executable mappings against NS permission-indirection
+leaks and preserves NS TCR2/PIR/PIRE0/HCRX state, FP/SIMD and thread registers.
+It also checks TRNG discovery/bounds/bit packing/nonrepeating requests and timer PPI 30.
 An additional synthetic guest pair exercises NS memory sharing, RX ownership,
 retrieval and reclaim alongside a concurrent secure flash transaction.
 Native tests exercise the exact `nor.c` used by the monitor. CI has no vendor

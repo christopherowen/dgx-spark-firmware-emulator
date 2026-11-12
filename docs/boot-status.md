@@ -44,7 +44,8 @@ capsule PKCS#7 trust chain or establish authenticated boot.
 | Native IPv4 PXE | Bundled Realtek UNDI/SNP/DHCP/PXE drivers obtain a lease and download an EFI program over TFTP |
 | Downloaded EFI execution | Original probe prints a fresh per-run token; complete acknowledged transfer matches the probe bytes |
 | Vendor Linux, under the same profile | The recovery kernel and installer initramfs reach userspace: `Run /init as init process`, the installer banner, `VERSION="1.155.49"` (`docs/linux-under-the-profile.md`, `tests/test_profile_userspace.py`) |
-| An installed operating system, GPU and physical NIC firmware | Not part of this result |
+| Installed Linux from the installer-produced NVMe image | Kernel `7.0.0-1019-nvidia` reaches `/init`, root mount and systemd; the bounded `20261111T160507.692000Z-context-fixed` capture did not reach a login prompt |
+| GPU and physical NIC firmware | Not part of this result |
 
 The 13 protocols are Security, Cpu, Metronome, Timer, Bds, WatchdogTimer,
 Runtime, Variable, VariableWrite, Capsule, MonotonicCounter, Reset and
@@ -101,7 +102,7 @@ QEMU libslirp provides a restricted local test network. Its dedicated TFTP
 directory contains only the generated original probe; vendor images, state,
 objects and logs are never served. The PCAP remains in the ignored run folder.
 This establishes IPv4 PXE and EFI application execution. IPv6 PXE, HTTP boot,
-Secure Boot image acceptance, OS boot and the physical NIC's embedded firmware
+Secure Boot image acceptance and the physical NIC's embedded firmware
 have not been verified.
 
 ## Model boundaries
@@ -137,7 +138,57 @@ UEFI boot, not execution of every component in the SoC image.
 The older `run_spark.py` diagnostic deliberately omits the monitor/MM package.
 It remains useful for SEC/DXE entry checks and explicit failure scenarios;
 its continuations are not the full-boot runner.
+## Installed-disk stall diagnosis and correction, 2026-11-11
+
+The vendor installer completes against the profile and the produced disk boots under the vendor UEFI to
+its own kernel (`7.0.0-1019-nvidia`), through `firmware -> EFI/BOOT/BOOTAA64.EFI -> shim -> GRUB -> /boot`
+without an NVRAM entry. Before the monitor fix, output stopped after `scmi_core`.
+
+The earlier claim that the CPU was waiting for an interrupt was wrong. Zero new translated-block samples
+in ten minutes rules out a retiring loop, but not recursive faults fetching an unmapped vector. The
+decisive `--trace-exceptions` run (`20261111T154523.547381Z`) records the **first** fault:
+
+```text
+STMM resume PC=0x93a7e168
+EL1 -> EL1 instruction abort: ESR=0x8600000f, FAR=ELR=0x93a7e168
+vector PC=0x200; subsequent ESR=0x86000005, FAR=ELR=0x200
+```
+
+The first fault is execute permission at level 3; the later faults are level-1 translation faults at the
+zero-based vector. The register file from `20261111T155336.769648Z-context-before` explicitly says
+**`S EL1h`**: this is secure STMM, not the non-secure Linux kernel. Its vector base was already zero
+at the first secure save, before UEFI ran. The monitor faithfully restores that zero; it did not zero
+Linux's vector base.
+
+The same capture measures both `TCR2_EL1` and `TCR2_EL2` initially `0`, then `2` (`PIE=1`) in the
+NS request after `scmi_core`, and still `2` after restoring STMM. These unbanked controls were omitted
+from the world context. Linux's permission-indirection state therefore reinterpreted secure legacy
+page descriptors and denied the correct return address execute permission.
+
+The monitor now preserves optional TCR2, stage-1 PIR/PIRE0 and HCRX state per world while leaving SCR
+feature enables unchanged. A synthetic executable-mapping regression fails with the old monitor and
+passes with the fix; NS permission state survives two round trips. Full measurements, hashes and run
+identifiers are recorded in [the Linux boot history](linux-under-the-profile.md).
+
+The firmware ROT retry loop, console model and `update_event_printk` infinite-scan theory remain ruled
+out. Neither an unchanged sample count nor an FF-A function ID by itself identifies the security state.
+
+With the fix, `20261111T160507.692000Z-context-fixed` reaches `/init` at guest time 18.422 s,
+mounts `nvme0n1p2` at 38.672 s, starts systemd 255.4 at 45.105 s and prints
+`Welcome to Ubuntu 24.04.4 LTS!`. The capture confirms secure TCR2/PIR/PIRE0/HCRX values restored to
+zero and NS PIE/permission values preserved, rather than disabling Linux's features. This is the
+installed kernel and root, not the recovery initramfs.
+
+That bounded capture did not reach a login prompt or desktop: it ended while AppArmor profiles
+were loading and a vendor software-removal startup job was still in progress. Neither was diagnosed
+as a stall.
+GCS and other optional context groups, the recovery boot after this change, GPU and physical-device
+support remain unverified or outside scope.
+
 ## Remaining platform limits and evidence boundaries
+
+These are separate from the permission-indirection correction and from a
+successful installed-Linux boot.
 
 ### ROT request capture is not a reconstructed security service
 
@@ -156,6 +207,19 @@ Retained `20261111T093421.135412Z/qemu.log` lines 40–41 and 106–117
 contain the transport capture (host diagnostics, **not UART lines**);
 additional `0x12` calls use third word `2` and last word `0x64a0ea5f`.
 The short examples above are not an exhaustive per-boot call count.
+
+### Optional context is not covered by the permission-state regression
+
+The fix and executable regression cover TCR2, stage-1 PIR/PIRE0 and HCRX,
+with normal-world permission state preserved over secure round trips.
+They do **not** establish preservation of guarded-control-stack state
+(`GCSCR`, `GCSCRE0`, `GCSPR`), fine-grained trap registers, `SCTLR2`, or
+every optional timer/debug/PMU context group. Those groups have not been
+independently exercised or exhaustively audited: **unverified**, not
+silently supported. Enabling accesses in `SCR_EL3` is not context
+preservation. SVE, SME and pointer authentication are explicitly disabled
+by the runner, not implemented by this monitor. This is a single-CPU,
+non-concurrent world-switch model, not production isolation.
 
 ### Three declared SMMUs, not three modelled SMMUs
 
