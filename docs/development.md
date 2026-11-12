@@ -69,6 +69,9 @@ Stage intended source changes, then check the index before committing:
 python3 tools/check_publication.py
 ```
 
+Owner-specific markers are read from the ignored local file `firmware/publication-markers.txt`,
+one marker per line; without that file only the built-in firmware checks run.
+
 CI checks publication, synthetic tests, a generic UEFI baseline, and the custom
 QEMU build and device tests. It never downloads Spark firmware or uploads run
 artifacts. Firmware-dependent boot checks are local only.
