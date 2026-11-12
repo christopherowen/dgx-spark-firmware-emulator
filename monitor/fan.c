@@ -54,6 +54,91 @@ static void complete(fan_u64 *r)
     r[0] = FAN_COMPLETION;
     r[1] = ((endpoint & 0xffff) << 16) | ((endpoint >> 16) & 0xffff);
 }
+#ifdef SPARK_FFA_EC
+/* Packet-service UUID in the byte order Linux places in DIRECT_REQ2 x2/x3.
+ * This is not the OEM/AML UUID above, despite their shared endpoint number. */
+#define PACKET_UUID0 0x86491dd2804db078UL
+#define PACKET_UUID1 0xc57a24607b46cb8aUL
+static unsigned lower_floor = 0xffff;
+static unsigned char packet_reply[65];
+
+unsigned fan_lower_floor(void) { return lower_floor; }
+
+static void put16(unsigned char *p, unsigned value)
+{
+    p[0] = value;
+    p[1] = value >> 8;
+}
+
+static void packet_rpm(void)
+{
+    const unsigned minimum[] = {1260, 1890}, maximum[] = {9000, 13500};
+    for (unsigned i = 0; i < 2; i++) {
+        /* A deterministic automatic policy, not a thermal/ramp/tachometer simulation. */
+        unsigned demand = lower_floor == 0xffff ? minimum[i] : lower_floor;
+        if (lower_floor && demand < minimum[i])
+            demand = minimum[i];
+        rpm[i] = demand > maximum[i] ? maximum[i] : demand;
+    }
+}
+
+int fan_packet_request(fan_u64 *r)
+{
+    int v2 = r[0] == 0xc400008dUL;
+    if ((r[0] != 0xc400006fUL && !v2) || r[1] != FAN_ENDPOINT ||
+        (v2 ? (r[2] != PACKET_UUID0 || r[3] != PACKET_UUID1) : r[2] != 0))
+        return 0;
+    unsigned start = v2 ? 4 : 3, words = v2 ? 18 : 8;
+    unsigned char *raw = (unsigned char *)&r[start];
+    unsigned command = raw[0], operation = raw[1], in = raw[2], out = raw[3];
+    unsigned value = raw[4] | (unsigned)raw[5] << 8;
+    fan_u64 endpoint = r[1];
+    for (unsigned i = 0; i < words; i++)
+        r[i] = 0;
+    r[0] = v2 ? 0xc400008eUL : 0xc4000070UL;
+    r[1] = endpoint << 16;
+    raw = (unsigned char *)&r[start];
+    if (command == 2) {
+        unsigned bytes = v2 ? sizeof(packet_reply) : 40;
+        for (unsigned i = 0; i < bytes; i++)
+            raw[i] = packet_reply[i];
+        return 1;
+    }
+    if (command != 1) {
+        raw[0] = 1; /* Unknown packet command: nonzero submit status. */
+        return 1;
+    }
+    if (!((operation == 1 && in == 0 && out == 10) ||
+          (operation == 4 && in == 0 && out == 2) ||
+          (operation == 5 && in == 2 && out == 0) ||
+          (operation == 7 && in == 0 && out == 64))) {
+        raw[0] = 1;
+        return 1;
+    }
+    for (unsigned i = 0; i < sizeof(packet_reply); i++)
+        packet_reply[i] = 0;
+    if (operation == 1) {
+        packet_reply[1] = 1; /* capabilities discriminator; RPM unit mode is zero */
+        put16(packet_reply + 3, 1260);
+        put16(packet_reply + 5, 9000);
+        put16(packet_reply + 7, 1890);
+        put16(packet_reply + 9, 13500);
+    } else if (operation == 4) {
+        put16(packet_reply + 1, lower_floor);
+    } else if (operation == 5) {
+        lower_floor = value;
+        packet_rpm();
+    } else {
+        packet_rpm();
+        put16(packet_reply + 5, rpm[0]);
+        put16(packet_reply + 7, rpm[1]);
+    }
+    /* Synchronous model: submit succeeds and every subsequent poll is complete.
+     * The cached reply remains available to preflight polls, like the relay ABI. */
+    return 1;
+}
+#endif
+
 
 int fan_request(fan_u64 *r)
 {

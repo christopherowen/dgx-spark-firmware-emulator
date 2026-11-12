@@ -21,16 +21,17 @@ class MonitorIntegrationTests(unittest.TestCase):
                         cpus=2, extra_defines=["-DTWO_CPUS"])
 
     def test_ns_share_retrieve_release_relinquish_reclaim_and_concurrent_flash(self):
-        self.run_guests("memory_probe_start.S", "ffa_memory_probe.c", b"MEMORY PASS", b"MEMORY FAIL")
+        self.run_guests("memory_probe_start.S", "ffa_memory_probe.c", b"MEMORY PASS", b"MEMORY FAIL",
+                        ffa_ec=True)
 
-    def run_guests(self, assembly, c_source, passed, failed, cpus=1, extra_defines=()):
-        monitor = build_monitor(cpus=cpus)
+    def run_guests(self, assembly, c_source, passed, failed, cpus=1, extra_defines=(), ffa_ec=False):
+        monitor = build_monitor(cpus=cpus, ffa_ec=ffa_ec)
         with tempfile.TemporaryDirectory(dir=ROOT / "build", prefix="monitor-test-") as temporary:
             directory = Path(temporary)
             for name, address, defines in (("secure", 0x93a42000, ["-DSECURE_PROBE"]),
                                            ("nonsecure", 0x80800000, [])):
                 obj, elf, binary = [directory / (name + suffix) for suffix in (".o", ".elf", ".bin")]
-                defines = defines + list(extra_defines)
+                defines = defines + list(extra_defines) + (["-DSPARK_FFA_EC=1"] if ffa_ec else [])
                 subprocess.run([find_tool("clang"), "--target=aarch64-none-elf", *defines, "-c",
                                 str(ROOT / "tests/fixtures" / assembly), "-o", str(obj)], check=True)
                 objects = [str(obj)]

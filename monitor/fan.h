@@ -26,4 +26,9 @@ unsigned fan_rpm(unsigned index);
 /* The rpm the firmware's WFCF computes for a level 0..100. */
 unsigned fan_rpm_for_level(unsigned level);
 
+#ifdef SPARK_FFA_EC
+int fan_packet_request(fan_u64 *r);
+unsigned fan_lower_floor(void);
+#endif
+
 #endif

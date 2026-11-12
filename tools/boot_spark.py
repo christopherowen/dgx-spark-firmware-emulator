@@ -213,7 +213,7 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
         trace_start=0, trace_exceptions=False,
         extended_ram=False, nvme_images=None, qmp_path=None, console_script=None,
         console_after=0.0, console_delay=0.03, usb_image=None, rot_functional=False,
-        no_setup_escape=False):
+        no_setup_escape=False, ffa_ec=False):
     qemu = shutil.which(qemu)
     if qemu is None:
         raise ValueError("build the Spark QEMU profile first: python3 tools/build_qemu.py")
@@ -235,6 +235,7 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
                             accept_mmap_notify, gwdt_timeout_ms, ram_top=ram_top,
                             rtc_base=epoch_seconds(rtc_base), code_offset=code_offset,
                             program_model=program_model, cpus=smp or 1,
+                            ffa_ec=ffa_ec,
                             code_size=(prepared_directory(firmware_version) / "uefi.fd").stat().st_size
                             if code_offset is not None else None)
     prepared_firmware = prepared_directory(firmware_version) / "uefi.fd"
@@ -294,6 +295,7 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
                           code_offset_source=code_offset_source, qmp_path=qmp_path,
                           console_script=console_script, console_after=console_after,
                           rot_functional=rot_functional, no_setup_escape=no_setup_escape,
+                          ffa_ec=ffa_ec,
                           console_delay=console_delay, usb_image=usb_image,
                           trace_pc=trace_pc, trace_limit=trace_limit, trace_sample=trace_sample,
                           trace_start=trace_start, trace_exceptions=trace_exceptions,
@@ -313,7 +315,7 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                trace_start=0, trace_exceptions=False,
                extended_ram=False, nvme_images=None, qmp_path=None, console_script=None,
                console_after=0.0, console_delay=0.03, usb_image=None, rot_functional=False,
-               no_setup_escape=False):
+               no_setup_escape=False, ffa_ec=False):
     firmware_directory = prepared_directory(firmware_version)
     if firmware_path is None:
         firmware_path = firmware_directory / "uefi.fd"
@@ -433,6 +435,7 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
         record["code_offset"] = code_offset
         record["flash_trace"] = bool(trace)
         record["accept_mmap_notify"] = bool(accept_mmap_notify)
+        record["ffa_ec"] = bool(ffa_ec)
         if gwdt_timeout_ms:
             record["gwdt_timeout_ms"] = gwdt_timeout_ms
         if mode is RunMode.PXE_TEST:
@@ -1072,6 +1075,8 @@ def main():
     parser.add_argument("--no-setup-escape", action="store_true",
                         help="do not send ESC at the firmware's boot prompt: on AMI that key enters "
                              "Setup rather than dismissing the prompt")
+    parser.add_argument("--ffa-ec", action="store_true",
+                        help="publish the experimental Linux FF-A EC packet service")
     parser.add_argument("--rot-functional", action="store_true",
                         help="answer the ROT services the firmware calls with their success status "
                              "instead of refusing them; a functional model that authenticates nothing")
@@ -1243,6 +1248,7 @@ def main():
                         console_script=args.console_script, console_after=args.console_after,
                         rot_functional=args.rot_functional,
                         no_setup_escape=args.no_setup_escape,
+                        ffa_ec=args.ffa_ec,
                         usb_image=args.usb_image,
                         accept_mmap_notify=args.accept_mmap_notify,
                         gwdt_timeout_ms=args.gwdt_timeout_ms,

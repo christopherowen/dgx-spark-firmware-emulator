@@ -162,7 +162,7 @@ class UsableMemoryTests(unittest.TestCase):
 
 @unittest.skipUnless(has_llvm_tools(), "a monitor build needs the LLVM host tools")
 class MonitorTraceBuildTests(unittest.TestCase):
-    def test_trace_build_is_a_different_binary(self):
+    def test_trace_and_ec_builds_are_different_binaries(self):
         # The diagnostic build must actually differ: the flag reaches the compiler, not just
         # the directory name.
         plain = build_monitor(nor_size=0x4000000, nor_offset=0, trace=False)
@@ -170,6 +170,10 @@ class MonitorTraceBuildTests(unittest.TestCase):
         self.assertNotEqual(plain, traced)
         self.assertIn("flashlog", traced.name)
         self.assertNotEqual(plain.read_bytes(), traced.read_bytes())
+        packet = build_monitor(nor_size=0x4000000, nor_offset=0, ffa_ec=True)
+        self.assertIn("ffa-ec", packet.name)
+        self.assertNotEqual(plain, packet)
+        self.assertNotEqual(plain.read_bytes(), packet.read_bytes())
 
     def test_rebuilding_the_same_monitor_gives_the_same_bytes(self):
         # run.json records monitor_sha256 as evidence of which model produced a result; that only

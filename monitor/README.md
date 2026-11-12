@@ -32,6 +32,30 @@ supported wire format and the unchanged firmware's fixed-buffer restriction.
 Unsupported calls return errors. This is a compatibility subset, not an FF-A
 conformance implementation or a replacement for production Hafnium/TF-A.
 
+PSCI_FEATURES advertises the implemented SMCCC_VERSION call, which returns
+exactly SMCCC 1.2 (`0x00010002`), so Linux can enable its register conduit.
+
+`boot_spark.py --ffa-ec` (or `build_monitor.py --ffa-ec`) opts into a separate
+Linux-facing EC packet model, compiled as `SPARK_FFA_EC`. Without this option
+the existing FF-A discovery is unchanged. The option answers FF-A RX/TX and
+direct-request feature queries and publishes a 24-byte descriptor for UUID
+`78b04d80-d21d-4986-8acb-467b60247ac5`, endpoint `0x8003`, one execution context,
+properties `0x0109`. Null-UUID discovery returns this service and STMM;
+count-only queries do not acquire RX, ordinary queries require mapping and
+release, and the firmware's existing STMM UUID-filtered path is retained.
+Register-based discovery and notifications remain unsupported.
+
+Both DIRECT_REQ2 and the legacy 64-bit direct request serve packet submit
+(`1`) and cached completion poll (`2`), with operations capabilities (`1`),
+read lower clamp (`4`), write lower clamp (`5`), and telemetry (`7`). Invalid
+operation/length combinations return a nonzero submit status without changing
+the floor. Completion is synchronous, not a simulation of a physical mailbox.
+The unset floor is `0xffff`; the deterministic automatic demand is
+1260/1890 RPM, and a common floor saturates at 9000/13500 RPM respectively.
+Zero explicitly stops both modelled fans. The telemetry is computed state,
+not a tachometer, thermal policy, timing/ramp, or real-unit validation.
+`MONITOR_TRACE` logs discovery and each packet's floor and computed RPM.
+
 The real MM firmware implements UEFI variables. `nor.c` supplies its peer flash
 interface using a NOR variable partition at flash offset `0x03000000` (or `0x0`
 when booting a whole-device `--flash-image`), sized by `NOR_SIZE` (32 MiB

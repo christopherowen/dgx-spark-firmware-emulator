@@ -210,6 +210,16 @@ psci_basics:
     smc #0
     cmp x0, #3
     b.ne fail
+    /* PSCI must advertise the implemented SMCCC 1.2 conduit even without EC discovery. */
+    ldr x0, =0x8400000a
+    ldr x1, =0x80000000
+    smc #0
+    cbnz x0, fail
+    ldr x0, =0x80000000
+    smc #0
+    ldr x1, =0x10002
+    cmp x0, x1
+    b.ne fail
     /* Model the installed kernel enabling stage-1 permission indirection in both regimes.
      * Index zero denies access, so leaking PIE into the secure legacy mapping faults on return. */
     mov x0, #0x4000

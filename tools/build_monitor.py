@@ -66,7 +66,7 @@ def latency_flags(write_us, erase_us=None):
 def build_monitor(policy="armed", write_us=0, erase_us=None, nor_size=0x2000000,
                   nor_offset=0x3000000, trace=False, accept_mmap_notify=False,
                   gwdt_timeout_ms=None, ram_top=None, rtc_base=None, code_offset=None,
-                  code_size=None, program_model="page", cpus=1):
+                  code_size=None, program_model="page", cpus=1, ffa_ec=False):
     if policy not in POLICIES:
         raise ValueError(f"unknown flash policy: {policy}")
     if nor_size not in NOR_SIZES:
@@ -126,6 +126,9 @@ def build_monitor(policy="armed", write_us=0, erase_us=None, nor_size=0x2000000,
         # NOT_SUPPORTED, so the two answers can be compared boot for boot.
         flags = flags + ["-DSPARK_ACCEPT_MMAP_NOTIFY=1"]
         suffix = suffix + "-mmapok"
+    if ffa_ec:
+        flags = flags + ["-DSPARK_FFA_EC=1"]
+        suffix = suffix + "-ffa-ec"
     output = ROOT / "build" / "monitor-{0}".format(suffix)
     if output.resolve() != output:
         raise ValueError("monitor build directory must not traverse symlinks")
@@ -158,6 +161,8 @@ if __name__ == "__main__":
                         help="answer 0xc4000122 with success instead of NOT_SUPPORTED")
     parser.add_argument("--flash-trace", action="store_true",
                         help="build a monitor that logs each answered flash request")
+    parser.add_argument("--ffa-ec", action="store_true",
+                        help="publish the experimental Linux FF-A EC packet service")
     parser.add_argument("--flash-policy", choices=sorted(POLICIES), default="armed",
                         help="armed matches the board; open models the pre-arming window")
     parser.add_argument("--nor-size", type=lambda v: int(v, 0), default=0x2000000,
@@ -172,4 +177,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     print(build_monitor(args.flash_policy, args.write_us, args.erase_us,
                         args.nor_size, args.nor_offset, args.flash_trace,
-                        args.accept_mmap_notify, args.gwdt_timeout_ms))
+                        args.accept_mmap_notify, args.gwdt_timeout_ms, ffa_ec=args.ffa_ec))

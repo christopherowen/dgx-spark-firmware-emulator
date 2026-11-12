@@ -39,6 +39,15 @@ class FanModelTests(unittest.TestCase):
         cls.fan.fan_rpm.restype = ctypes.c_uint
         cls.fan.fan_rpm_for_level.argtypes = [ctypes.c_uint]
         cls.fan.fan_rpm_for_level.restype = ctypes.c_uint
+        packet_library = Path(cls.directory.name) / "fan-packet.so"
+        subprocess.run(["cc", "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror",
+                        "-DSPARK_FFA_EC=1", "-I", str(ROOT / "monitor"), str(SOURCE),
+                        "-o", str(packet_library)], check=True)
+        cls.packet = ctypes.CDLL(str(packet_library))
+        cls.packet.fan_packet_request.argtypes = [ctypes.POINTER(ctypes.c_ulong)]
+        cls.packet.fan_packet_request.restype = ctypes.c_int
+        cls.packet.fan_rpm.argtypes = [ctypes.c_uint]
+        cls.packet.fan_rpm.restype = ctypes.c_uint
 
     @classmethod
     def tearDownClass(cls):
@@ -50,10 +59,36 @@ class FanModelTests(unittest.TestCase):
         frame = (ctypes.c_ulong * 31)(0xC400008D, 0x8003, GUID_HI, GUID_LO, request)
         return self.fan.fan_request(frame), frame
 
+    def packet_call(self, payload, v2=True, endpoint=0x8003,
+                    uuid=(0x86491DD2804DB078, 0xC57A24607B46CB8A)):
+        frame = (ctypes.c_ulong * 31)()
+        frame[0], frame[1] = (0xC400008D if v2 else 0xC400006F), endpoint
+        if v2:
+            frame[2], frame[3] = uuid
+        start = 4 if v2 else 3
+        ctypes.memmove(ctypes.addressof(frame) + start * 8, payload, len(payload))
+        handled = self.packet.fan_packet_request(frame)
+        raw = bytes(frame)[start * 8:(18 if v2 else 8) * 8]
+        return handled, frame, raw
+
+    def packet_operation(self, operation, inputs=b"", out=0, v2=True):
+        handled, frame, raw = self.packet_call(
+            bytes((1, operation, len(inputs), out)) + inputs, v2=v2)
+        self.assertEqual(handled, 1)
+        self.assertEqual(frame[0], 0xC400008E if v2 else 0xC4000070)
+        self.assertEqual(frame[1], 0x80030000)
+        self.assertEqual(raw[:4], b"\0" * 4)
+        handled, _, raw = self.packet_call(b"\2", v2=v2)
+        self.assertEqual(handled, 1)
+        self.assertEqual(raw[0], 0)
+        return raw[1:]
+
     def test_the_firmware_arithmetic_is_reproduced(self):
         for level, rpm in ((0, FMIN), (50, FMIN + (FMAX - FMIN) // 2), (100, FMAX)):
             with self.subTest(level=level):
                 self.assertEqual(self.fan.fan_rpm_for_level(level), rpm)
+        caps = self.packet_operation(1, out=10)
+        self.assertEqual(caps[:10], bytes.fromhex("0100ec0428236207bc34"))
 
     def test_a_level_is_written_as_two_bytes_per_fan_and_reads_back(self):
         for level in (0, 50, 100):
@@ -66,6 +101,18 @@ class FanModelTests(unittest.TestCase):
             handled, frame = self.call(0x0C | (0x06000704 << 8) | (2 << 40))
             self.assertEqual(handled, 1)
             self.assertEqual(frame[4] & 0xFFFF, rpm, f"level {level} reads back {frame[4] & 0xFFFF}")
+        for v2 in (False, True):
+            for floor, expected in ((4500, (4500, 4500)),
+                                    (13500, (9000, 13500)),
+                                    (0, (0, 0)), (0xFFFF, (1260, 1890))):
+                with self.subTest(v2=v2, floor=floor):
+                    self.packet_operation(5, floor.to_bytes(2, "little"), v2=v2)
+                    reply = self.packet_operation(4, out=2, v2=v2)
+                    self.assertEqual(int.from_bytes(reply[:2], "little"), floor)
+                    telemetry = self.packet_operation(7, out=64, v2=v2)
+                    self.assertEqual(tuple(int.from_bytes(telemetry[i:i + 2], "little")
+                                           for i in (4, 6)), expected)
+                    self.assertEqual(tuple(self.packet.fan_rpm(i) for i in (0, 1)), expected)
 
     def test_the_two_fans_are_independent(self):
         """Four sub-commands, two fans: a model that answered every write with one fan's state would
@@ -109,12 +156,24 @@ class FanModelTests(unittest.TestCase):
     def test_another_service_guid_is_not_claimed(self):
         frame = (ctypes.c_ulong * 31)(0xC400008D, 0x8003, 0x1111111111111111, GUID_LO, 0)
         self.assertEqual(self.fan.fan_request(frame), 0)
+        self.assertEqual(self.packet_call(b"\2", uuid=(0, 0))[0], 0)
+        self.assertEqual(self.packet_call(b"\2", endpoint=0x8004)[0], 0)
+        self.assertFalse(hasattr(self.fan, "fan_packet_request"),
+                         "the default monitor must not expose the gated service")
 
     def test_an_unknown_command_is_refused_rather_than_answered(self):
         handled, _frame = self.call(0x09 | (0x06000799 << 8) | (1 << 40))
         self.assertEqual(handled, 0)
         handled, _frame = self.call(0x0C | (0x06000799 << 8) | (2 << 40))
         self.assertEqual(handled, 0)
+        before = self.packet_operation(4, out=2)[:2]
+        for payload in (b"\x01\x05\x01\x00\xff", b"\x01\x04\x00\x03",
+                        b"\x01\xff\x00\x00", b"\x03"):
+            with self.subTest(payload=payload):
+                handled, _, raw = self.packet_call(payload)
+                self.assertEqual(handled, 1)
+                self.assertNotEqual(int.from_bytes(raw[:4], "little"), 0)
+                self.assertEqual(self.packet_operation(4, out=2)[:2], before)
 
     def test_a_different_function_id_is_not_ours(self):
         frame = (ctypes.c_ulong * 31)(0xC400008C, 0x8003, GUID_HI, GUID_LO, 0)

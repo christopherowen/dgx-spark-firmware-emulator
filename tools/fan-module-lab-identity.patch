@@ -1,0 +1,18 @@
+--- a/dgx_ec_fan_control.c
++++ b/dgx_ec_fan_control.c
+@@ -212,6 +212,15 @@
+ 
+ static bool dgx_ec_is_supported_platform(void)
+ {
++#ifdef DGX_EC_LAB_IDENTITY
++	/* Emulator-only copy: vendor firmware's unprovisioned SMBIOS defaults. */
++	if (dmi_match(DMI_SYS_VENDOR, "NVIDIA") &&
++	    dmi_match(DMI_PRODUCT_NAME, "DGX Spark") &&
++	    dmi_match(DMI_BOARD_NAME, "DGX Spark")) {
++		pr_info("dgx_ec_fan_control: lab identity override NVIDIA / DGX Spark / DGX Spark\n");
++		return true;
++	}
++#endif
+ 	return dmi_match(DMI_SYS_VENDOR, "NVIDIA") &&
+ 	       dmi_match(DMI_PRODUCT_NAME, "NVIDIA_DGX_Spark") &&
+ 	       dmi_match(DMI_BOARD_NAME, "P4242");

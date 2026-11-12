@@ -627,6 +627,75 @@ static void trng(u64 *r, u32 fid) {
     }
 }
 
+#ifdef SPARK_FFA_EC
+/* Linux's FF-A 1.2 discovery path. Keep the firmware's UUID-filtered STMM
+ * query on the existing path; publish only services actually implemented here. */
+static int ec_discovery(u64 *r)
+{
+    if (r[0] == 0x84000064) {
+        u32 feature = r[1];
+        switch (feature) {
+        case 0x84000063: case 0x84000064: case 0x84000065:
+        case 0xc4000066: case 0x84000067: case 0x84000068:
+        case 0x84000069: case DIRECT_REQ: case DIRECT_RESP:
+        case 0xc400008d: case 0xc400008e:
+            if (r[2] || r[3] || r[4] || r[5] || r[6] || r[7])
+                ffa_error(r, FFA_INVALID_PARAMETERS);
+            else {
+                success(r);
+                if (feature == 0xc4000066)
+                    r[2] = 1UL << 16; /* 4 KiB minimum and maximum. */
+            }
+            return 1;
+        default:
+            return 0; /* Existing memory features, or explicit NOT_SUPPORTED. */
+        }
+    }
+    if (r[0] != 0x84000068)
+        return 0;
+    int all = !(r[1] || r[2] || r[3] || r[4]);
+    int packet = r[1] == 0x804db078 && r[2] == 0x86491dd2 &&
+                 r[3] == 0x7b46cb8a && r[4] == 0xc57a2460;
+    if (!all && !packet)
+        return 0;
+    unsigned count = all ? 2 : 1;
+    if ((r[5] & ~1UL) || r[6] || r[7]) {
+        ffa_error(r, FFA_INVALID_PARAMETERS);
+        return 1;
+    }
+    if (!(r[5] & 1)) {
+        if (!ns_rx) {
+            ffa_error(r, FFA_DENIED);
+            return 1;
+        }
+        if (ns_rx_full) {
+            ffa_error(r, FFA_BUSY);
+            return 1;
+        }
+        u32 *data = (u32 *)ns_rx;
+        const u32 descriptors[] = {
+            0x00018003, 0x0109, 0x804db078, 0x86491dd2, 0x7b46cb8a, 0xc57a2460,
+            0x00018004, 0x0603, 0x9b12fb8a, 0x6047ca64, 0x88c81886, 0x4a6caa4c,
+        };
+        for (unsigned i = 0; i < count * 6; i++)
+            data[i] = descriptors[i];
+        ns_rx_full = 1;
+        __asm__ volatile("dsb sy" ::: "memory");
+    }
+#ifdef MONITOR_TRACE
+    console_puts("\nFFA-EC partition count=");
+    hex(count);
+    console_puts(" count-only=");
+    hex(r[5] & 1);
+    console_puts(" packet=0x8003 properties=0x0109 UUID=78b04d80-d21d-4986-8acb-467b60247ac5\n");
+#endif
+    success(r);
+    r[2] = count;
+    r[3] = 24;
+    return 1;
+}
+#endif
+
 void handle(u64 *r, u64 level) {
     u64 esr = level == 3 ? READ(ESR_EL3) : READ(ESR_EL2);
     u32 fid = r[0];
@@ -738,6 +807,29 @@ void handle(u64 *r, u64 level) {
         }
         return;
     }
+#ifdef SPARK_FFA_EC
+    if (ns && ec_discovery(r))
+        return;
+    if (ns && (fid == DIRECT_REQ || fid == 0xc400008d)) {
+#ifdef MONITOR_TRACE
+        u64 request = r[fid == DIRECT_REQ ? 3 : 4];
+#endif
+        if (fan_packet_request(r)) {
+#ifdef MONITOR_TRACE
+            console_puts("\nEC-PACKET request=");
+            hex(request);
+            console_puts(" lower-floor=");
+            hex(fan_lower_floor());
+            console_puts(" model-rpm=");
+            hex(fan_rpm(0));
+            console_puts(",");
+            hex(fan_rpm(1));
+            console_puts("\n");
+#endif
+            return;
+        }
+    }
+#endif
     if (fid == 0xc400008d && ns && (r[1] & 0xffff) == 0x8003 && rtc_service(r))
         return;
     if (fid == 0xc400008d && ns && fan_request(r))
@@ -761,6 +853,12 @@ void handle(u64 *r, u64 level) {
         /* Bit 0: a 32-bit variant is answered. Bit 1: a 64-bit variant is answered. Only the calls
          * this monitor really answers are advertised. */
         u32 feature = (u32)r[1];
+        /* Linux asks PSCI whether SMCCC_VERSION exists before enabling its
+         * SMCCC 1.2 register transport. Without this, arm_ffa never probes. */
+        if (feature == 0x80000000) {
+            r[0] = 0;
+            return;
+        }
         r[0] = (feature == 0x84000004 || feature == 0xc4000004) ? 3 : -1UL;
         return;
     }
@@ -946,12 +1044,10 @@ void handle(u64 *r, u64 level) {
         r[1] = ((endpoints & 0xffff) << 16) | ((endpoints >> 16) & 0xffff);
         return;
     }
-    /* PARTITION_INFO_GET. This model answers with **one** partition — STMM — because that is the one the
-     * modelled boot talks to, while a real unit enumerates twenty (research/ffa-partitions-live.json
-     * records the measured list, including the fan service at 0x8003). Responding with the measured list
-     * would be more faithful only if the descriptor encoding were verified against a guest that parses it;
-     * emitting an unverified structure is exactly the kind of guess that has crashed this firmware before,
-     * so the model stays deliberately narrow and says so here. */
+    /* Default / firmware UUID-filtered PARTITION_INFO_GET path: STMM only.
+     * SPARK_FFA_EC handles Linux's null/packet UUID queries above. The firmware's
+     * existing UUID word order is retained here; the Linux descriptors use its
+     * canonical UUID byte encoding. Do not advertise unimplemented partitions. */
     if (fid == 0x84000068) {
         u64 rx = ns ? ns_rx : sp_rx;
         if ((r[1] || r[2] || r[3] || r[4]) && (r[1] != 0x8afb129b || r[2] != 0x64ca4760 ||
@@ -990,6 +1086,9 @@ void handle(u64 *r, u64 level) {
     if (fid == 0x84000067) {
         if (ns) {
             ns_rx = ns_tx = 0;
+#ifdef SPARK_FFA_EC
+            ns_rx_full = 0;
+#endif
         } else {
             sp_rx = sp_tx = 0;
         }
