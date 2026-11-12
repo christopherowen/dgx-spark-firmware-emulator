@@ -110,9 +110,11 @@ struct context {
 static struct context secure_context, nonsecure_context;
 static int ns_started, ns_pending;
 static int has_tcr2, has_s1pie, has_hcrx;
+#ifdef MONITOR_TRACE
 /* Which direct request is waiting for the secure world, so its answer can be logged as a pair
- * with the question it answers. Only meaningful under MONITOR_TRACE. */
+ * with the question it answers. */
 static u64 pending_direct;
+#endif
 
 /* The parked secondary's mailbox, filled by CPU_ON. Defined in start.S's .data so a core that has not
  * yet run the primary's BSS clear still sees it. */
@@ -1144,7 +1146,9 @@ void handle(u64 *r, u64 level) {
 #endif
         save(&nonsecure_context, r);
         ns_pending = 1;
+#ifdef MONITOR_TRACE
         pending_direct = r[1];
+#endif
         copy(sp_hvc_frame, r, 8);
         WRITE(SCR_EL3, SCR);
         restore(&secure_context, r);
