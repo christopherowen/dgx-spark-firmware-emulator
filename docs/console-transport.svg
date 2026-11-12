@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="466" viewBox="0 0 1040 466" role="img" aria-labelledby="title desc">
+  <title id="title">Console input: a source-traced QMP failure and host-verified serial writes</title>
+  <desc id="desc">An earlier development revision of this work delivered console input with QMP send-key: the harness formatted the line and sent the command, and QEMU's input layer looked for a keyboard handler. This profile runs with no default devices and no display, so there is no handler and the event was dropped before the serial port; the mechanism is traced at source, not executed as a drop test. The lower lane is what the retained series ships: paced bytes to the child's serial stdin. Host-level regression evidence executes the runner's real scheduled-script branch against a recording stdin, and the serial device is the one boot_spark configures at 0x16a00000. Guest execution in this branch was established through run_linux.py's separate serial route under plain virt. No guest boot with the corrected script has been measured, so the last box states what evidence would be needed rather than asserting it.</desc>
+
+  <style>
+    .frame { fill: #ffffff; stroke: #c8cdd4; stroke-width: 1.5; }
+    .panel { fill: #f7f8fa; stroke: #c8cdd4; stroke-width: 1.5; }
+    .title { font: bold 20px ui-sans-serif, system-ui, sans-serif; fill: #1f2328; }
+    .sub { font: 13px ui-sans-serif, system-ui, sans-serif; fill: #57606a; }
+    .head { font: bold 14px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #1f2328; }
+    .label { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #1f2328; }
+    .small { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #57606a; }
+    .ok { fill: #dcfce7; stroke: #16a34a; stroke-width: 1.5; }
+    .bad { fill: #fee2e2; stroke: #dc2626; stroke-width: 1.5; }
+    .tool { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.2; }
+    .warn { fill: #fde68a; stroke: #b45309; stroke-width: 1.5; }
+    .arrow { stroke: #57606a; stroke-width: 1.6; fill: none; }
+    .dead { stroke: #dc2626; stroke-width: 1.6; fill: none; }
+  </style>
+
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"/>
+    </marker>
+    <marker id="x" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#dc2626"/>
+    </marker>
+  </defs>
+
+  <rect class="frame" x="1" y="1" width="1038" height="464" rx="10"/>
+  <text class="title" x="24" y="34">Console input: a traced failure at QMP, a host-verified serial path</text>
+  <text class="sub" x="24" y="56">The upper lane is an earlier revision. The lower is what the retained series ships, and the band marks where its evidence stops.</text>
+
+  <!-- LANE A -->
+  <rect class="panel" x="24" y="76" width="992" height="130" rx="8"/>
+  <text class="head" x="40" y="100">an earlier revision: QMP send-key, never delivered — source trace, not an executed drop test</text>
+
+  <rect class="tool" x="40" y="114" width="168" height="70" rx="5"/>
+  <text class="label" x="52" y="136">boot_spark harness</text>
+  <text class="small" x="52" y="153">formats "ls /mnt/root"</text>
+  <text class="small" x="52" y="167">calls send-key</text>
+
+  <line class="arrow" x1="212" y1="149" x2="272" y2="149" marker-end="url(#a)"/>
+  <rect class="tool" x="276" y="114" width="180" height="70" rx="5"/>
+  <text class="label" x="288" y="136">QMP socket</text>
+  <text class="small" x="288" y="153">send-key accepted,</text>
+  <text class="small" x="288" y="167">returns success</text>
+
+  <line class="arrow" x1="460" y1="149" x2="516" y2="149" marker-end="url(#a)"/>
+  <rect class="bad" x="520" y="114" width="196" height="70" rx="5"/>
+  <text class="label" x="532" y="136">ui/input.c</text>
+  <text class="small" x="532" y="153">no keyboard device:</text>
+  <text class="small" x="532" y="167">-nodefaults, -display none</text>
+
+  <line class="dead" x1="720" y1="149" x2="784" y2="149" marker-end="url(#x)"/>
+  <rect class="bad" x="788" y="114" width="212" height="70" rx="5"/>
+  <text class="label" x="800" y="136">dropped</text>
+  <text class="small" x="800" y="153">no handler, so no byte</text>
+  <text class="small" x="800" y="167">reaches the serial port</text>
+
+  <!-- LANE B -->
+  <rect class="panel" x="24" y="216" width="992" height="130" rx="8"/>
+  <text class="head" x="40" y="240">corrected transport: paced bytes to boot_spark's serial stdin</text>
+
+  <rect class="tool" x="40" y="254" width="168" height="70" rx="5"/>
+  <text class="label" x="52" y="276">boot_spark harness</text>
+  <text class="small" x="52" y="293">writes paced bytes:</text>
+  <text class="small" x="52" y="307">"ls /mnt/root\n"</text>
+
+  <line class="arrow" x1="212" y1="289" x2="272" y2="289" marker-end="url(#a)"/>
+  <rect class="tool" x="276" y="254" width="180" height="70" rx="5"/>
+  <text class="label" x="288" y="276">process.stdin</text>
+  <text class="small" x="288" y="293">-serial stdio,</text>
+  <text class="small" x="288" y="307">a chardev</text>
+
+  <line class="arrow" x1="460" y1="289" x2="516" y2="289" marker-end="url(#a)"/>
+  <rect class="tool" x="520" y="254" width="196" height="70" rx="5"/>
+  <text class="label" x="532" y="276">the UART</text>
+  <text class="small" x="532" y="293">16550 at 0x16a00000</text>
+  <text class="small" x="532" y="307">not exercised yet</text>
+
+  <line class="arrow" x1="720" y1="289" x2="784" y2="289" marker-end="url(#a)"/>
+  <rect class="warn" x="788" y="254" width="212" height="70" rx="5"/>
+  <text class="label" x="800" y="276">guest execution unproven</text>
+  <text class="small" x="800" y="293">host-verified bytes only</text>
+  <text class="small" x="800" y="307">no guest output evidence</text>
+
+  <!-- BOTTOM -->
+  <rect class="panel" x="24" y="356" width="992" height="94" rx="6"/>
+  <text class="small" x="40" y="376">Evidence: the host regression runs this branch's real scheduled-script branch against a recording stdin.</text>
+  <text class="small" x="40" y="394">The upper lane is traced in QEMU's input dispatch, not executed as a drop test; that is why it is drawn, not measured.</text>
+  <text class="small" x="40" y="412">Guest execution here was established through run_linux.py's own serial route under plain virt, not through boot_spark's 0x16a00000.</text>
+  <text class="small" x="40" y="430">Receipts record console_input_transport and console_script.transport; the single retained QMP console-script run carries no execution.</text>
+</svg>
