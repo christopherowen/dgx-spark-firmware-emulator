@@ -19,7 +19,7 @@ diff --git a/include/hw/arm/virt.h b/include/hw/arm/virt.h
  struct VirtMachineState {
      MachineState parent;
      Notifier machine_done;
-@@ -166,6 +177,29 @@
+@@ -166,6 +177,30 @@
      FWCfgState *fw_cfg;
      PFlashCFI01 *flash[2];
      bool secure;
@@ -27,7 +27,8 @@ diff --git a/include/hw/arm/virt.h b/include/hw/arm/virt.h
 +    bool spark_rot_error_replies;
 +    SparkRotMailbox spark_rot[2];
 +    MemoryRegion spark_ecam;
-+    uint8_t spark_root_config[15][4096];
++    MemoryRegion spark_pcif;
++    uint8_t spark_root_config[16][4096];
 +    MemoryRegion spark_pcie_cfg[36];
 +    uint8_t spark_pcie_cfgregs[36][0x10000];
 +    MemoryRegion spark_boardcfg;
@@ -222,7 +223,7 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
      /* Map IO port space */
      sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, base_pio);
  
-@@ -2526,6 +2629,428 @@
+@@ -2526,6 +2629,509 @@
      }
  }
  
@@ -572,28 +573,82 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +    .valid.unaligned = true, .impl.unaligned = true,
 +};
 +
++/* Segment 15 is the root the guest OS is told to walk: the vendor's MCFG entry puts it at
++ * 0x29000000 over buses 0-1, and the firmware's SSDT enables that bridge and none of the sixteen it
++ * declares in its own DSDT. Its slot 0 is a root port whose secondary bus is 1, which is where the
++ * endpoints answer.
++ */
++/* 0 for the current bisect: a bridge with nothing behind it, to separate 'the firmware
++ * tolerates the root port' from 'the firmware tolerates devices behind it'. */
++#define SPARK_PCIF_SEGMENT 15
++#define SPARK_PCIF_BASE    0x29000000
++#define SPARK_PCIF_SIZE    0x200000
++
++/* Which endpoint answers in a given segment window, if any. Each device appears exactly once across
++ * the sixteen windows, because the firmware walks all of them from its own MCFG and a device reachable
++ * through two roots is enumerated twice: measured, that second pass reads the same controller's
++ * configuration again and the boot never reaches PXE afterwards.
++ *
++ *   segment 0  (0xf300000000)     the NIC, at bus 1 slot 0 -- the slot the firmware's boot option
++ *                                and every stored receipt name
++ *   segment 15 (0x29000000, PCIF) the storage controllers, at bus 1 slot 2, 3, ...
++ *
++ * Segment 15 is the root the guest OS is told to walk: the vendor's own SSDT enables PCIF and none of
++ * the other bridges, so on this platform a Linux guest does not see the NIC and must see the disks.
++ *
++ * Bus 1 is the endpoint bus. The NIC sits at guest slot 0 while the host bridge keeps it at its own
++ * device 1 (devfn 8); that host devfn is never a guest slot, or the same NIC would answer at two
++ * addresses. Storage slots are looked up rather than listed.
++ */
++static PCIDevice *spark_endpoint(VirtMachineState *vms, unsigned segment, hwaddr offset)
++{
++    unsigned bus = (offset >> 20) & 0xff;
++    unsigned devfn = (offset >> 12) & 0xff;
++    if (!vms->bus) {
++        return NULL;
++    }
++    /* Segment 0, bus 1, slot 0: the NIC. The firmware's boot option names it there. */
++    if (segment == 0 && bus == 1 && devfn == 0) {
++        return pci_find_device(vms->bus, 0, 8);
++    }
++    /* Segment 15, ROOT bus: the storage controllers, where a guest OS cannot have to walk through
++     * a bridge this model does not need. Nothing is exposed on bus 1 of this segment. */
++    if (segment == SPARK_PCIF_SEGMENT && bus == 0 && devfn >= 16) {
++        return pci_find_device(vms->bus, 0, devfn);
++    }
++    return NULL;
++}
++
++static bool spark_endpoint_read(VirtMachineState *vms, unsigned segment, hwaddr offset,
++                                unsigned size, uint64_t *value)
++{
++    PCIDevice *endpoint = spark_endpoint(vms, segment, offset);
++    if (!endpoint) {
++        return false;
++    }
++    *value = pci_host_config_read_common(endpoint, offset & 0xfff, pci_config_size(endpoint), size);
++    return true;
++}
++
++static bool spark_endpoint_write(VirtMachineState *vms, unsigned segment, hwaddr offset,
++                                 uint64_t value, unsigned size)
++{
++    PCIDevice *endpoint = spark_endpoint(vms, segment, offset);
++    if (!endpoint) {
++        return false;
++    }
++    pci_host_config_write_common(endpoint, offset & 0xfff, pci_config_size(endpoint), value, size);
++    return true;
++}
++
 +static uint64_t spark_ecam_read(void *opaque, hwaddr addr, unsigned size)
 +{
 +    VirtMachineState *vms = opaque;
 +    unsigned segment = addr >> 28;
 +    hwaddr offset = addr & 0xfffffff;
-+    /* Minimal lab bridge: segment 0, bus 1, slot 0 -> GPEX slot 1 (the NIC) and
-+     * slot 2 -> GPEX slot 2 (optional storage). The NIC keeps its 256-byte
-+     * conventional window; the second endpoint is read through the host bridge
-+     * helpers, which address the device's own configuration size, because an
-+     * NVMe controller answers 4096 bytes of it.
-+     */
-+    if (segment == 0 && vms->bus && offset >= 0x100000) {
-+        if (offset + size <= 0x100100) {
-+            return pci_data_read(vms->bus, 8 * 256 + (offset & 255), size);
-+        }
-+        if (offset >= 0x110000 && offset < 0x112000) {
-+            PCIDevice *endpoint = pci_find_device(vms->bus, 0, 16);
-+            if (endpoint) {
-+                return pci_host_config_read_common(
-+                    endpoint, offset & 0xfff, pci_config_size(endpoint), size);
-+            }
-+        }
++    uint64_t endpoint_value;
++    if (spark_endpoint_read(vms, segment, offset, size, &endpoint_value)) {
++        return endpoint_value;
 +    }
 +    if (offset + size > 4096) {
 +        return UINT64_MAX;
@@ -618,19 +673,8 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +    VirtMachineState *vms = opaque;
 +    unsigned segment = addr >> 28;
 +    hwaddr offset = addr & 0xfffffff;
-+    if (segment == 0 && vms->bus && offset >= 0x100000) {
-+        if (offset + size <= 0x100100) {
-+            pci_data_write(vms->bus, 8 * 256 + (offset & 255), value, size);
-+            return;
-+        }
-+        if (offset >= 0x110000 && offset < 0x112000) {
-+            PCIDevice *endpoint = pci_find_device(vms->bus, 0, 16);
-+            if (endpoint) {
-+                pci_host_config_write_common(
-+                    endpoint, offset & 0xfff, pci_config_size(endpoint), value, size);
-+                return;
-+            }
-+        }
++    if (spark_endpoint_write(vms, segment, offset, value, size)) {
++        return;
 +    }
 +    if (offset + size > 4096 || offset < 4 ||
 +        (offset >= 8 && offset < 0x10) ||
@@ -648,10 +692,48 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +    .impl.min_access_size = 1, .impl.max_access_size = 4,
 +};
 +
++static uint64_t spark_pcif_read(void *opaque, hwaddr addr, unsigned size)
++{
++    VirtMachineState *vms = opaque;
++    uint64_t value;
++    /* Diagnostic: the first accesses name their own bus and slot, so a boot that fails once this
++     * window exists says which side walked it. Bounded, so a run's log stays readable. */
++    static unsigned logged;
++    if (logged < 64) {
++        logged++;
++        qemu_log_mask(LOG_GUEST_ERROR, "spark: pcif read bus=%u devfn=%u reg=%#x size=%u\n",
++                      (unsigned)(addr >> 20) & 0xff, (unsigned)(addr >> 12) & 0xff,
++                      (unsigned)addr & 0xfff, size);
++    }
++    if (spark_endpoint_read(vms, SPARK_PCIF_SEGMENT, addr, size, &value)) {
++        return value;
++    }
++    /* No root port is modelled in this segment, so every other slot reads as "no device". A zeroed
++     * header would claim one at bus 0 slot 0, which is the one thing measured to derail the
++     * firmware's own boot. */
++    return UINT64_MAX;
++}
++
++static void spark_pcif_write(void *opaque, hwaddr addr, uint64_t value, unsigned size)
++{
++    VirtMachineState *vms = opaque;
++    if (spark_endpoint_write(vms, SPARK_PCIF_SEGMENT, addr, value, size)) {
++        return;
++    }
++    /* Nothing else in this segment takes writes: there is no bridge to configure. */
++}
++
++static const MemoryRegionOps spark_pcif_ops = {
++    .read = spark_pcif_read, .write = spark_pcif_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 1, .valid.max_access_size = 4,
++    .impl.min_access_size = 1, .impl.max_access_size = 4,
++};
++
  static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
  {
      MachineState *ms = MACHINE(vms);
-@@ -2538,6 +3063,203 @@
+@@ -2538,6 +3063,214 @@
          vms->memmap[i] = base_memmap[i];
      }
  
@@ -770,6 +852,11 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +            memory_region_add_subregion(get_system_memory(), usb_config[i].base,
 +                                        &vms->spark_usb_config[i]);
 +        }
++        /* Segments 0-14 are the firmware's own MCFG window at 0xf300000000; segment 15 is the
++         * guest OS's. All sixteen carry the same type-1 header at bus 0 slot 0 -- a root port whose
++         * class is 0x0604 -- and only segment 15 also gets the bus numbers and windows that let a
++         * kernel descend into bus 1 and place the endpoints' BARs.
++         */
 +        for (unsigned i = 0; i < 15; i++) {
 +            uint8_t *r = vms->spark_root_config[i];
 +            r[0] = 0xde; r[1] = 0x10; r[2] = 0xce; r[3] = 0x22;
@@ -781,6 +868,12 @@ diff --git a/hw/arm/virt.c b/hw/arm/virt.c
 +                              vms, "spark-empty-pcie-roots", 0xf0000000);
 +        memory_region_add_subregion_overlap(get_system_memory(), 0xf300000000UL,
 +                                            &vms->spark_ecam, 1);
++        /* Above the PCI memory window's priority: 0x29000000 lies inside it, and the guest's
++         * configuration reads must reach this bridge rather than be forwarded to the bus. */
++        memory_region_init_io(&vms->spark_pcif, OBJECT(vms), &spark_pcif_ops, vms,
++                              "spark-pcif-ecam", SPARK_PCIF_SIZE);
++        memory_region_add_subregion_overlap(get_system_memory(), SPARK_PCIF_BASE,
++                                            &vms->spark_pcif, 2);
 +        static const hwaddr pcie_config[] = {
 +            0x1d600000, 0x1d6a0000, 0x1d720000, 0x1d7a0000,
 +            0x1d800000, 0x1d810000, 0x1d820000, 0x1d830000, 0x1d950000,

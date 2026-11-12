@@ -10,6 +10,8 @@
  *   limit=N      stop logging after N hits; 0 (the default) means no limit — every hit is logged
  *                and the summary still reports the total, so a cap is always a deliberate choice
  *   regs=x4,x0   registers to print with each hit (default x4,x0)
+ *   start=N      do not sample before the N-th executed block; lets a sampler skip a firmware phase
+ *                whose block count is already known from a previous run's summary
  *   sample=N     log the address of every N-th translated basic block executed; 0 (the default)
  *                turns it off. With pc left at 0 this is a sampler: it answers "where is the guest
  *                running now?" for a boot that never reaches its next print, which no counter can.
@@ -43,13 +45,14 @@ static int wanted_count;
 static qemu_plugin_reg_descriptor *resolved[MAX_REGS];
 static GArray *register_table;
 static uint64_t sample_every;
+static uint64_t sample_start;
 static uint64_t blocks;
 static uint64_t samples;
 
 static void on_tb_exec(unsigned int cpu_index, void *userdata)
 {
     uint64_t block = blocks++;
-    if (!sample_every || block % sample_every) {
+    if (!sample_every || block < sample_start || (block - sample_start) % sample_every) {
         return;
     }
     samples++;
@@ -171,6 +174,8 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id, const qemu_info_
             target_pc = strtoull(argv[i] + 3, NULL, 0);
         } else if (strncmp(argv[i], "limit=", 6) == 0) {
             limit = strtoull(argv[i] + 6, NULL, 0);
+        } else if (strncmp(argv[i], "start=", 6) == 0) {
+            sample_start = strtoull(argv[i] + 6, NULL, 0);
         } else if (strncmp(argv[i], "sample=", 7) == 0) {
             sample_every = strtoull(argv[i] + 7, NULL, 0);
         } else if (strncmp(argv[i], "regs=", 5) == 0) {

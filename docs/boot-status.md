@@ -73,6 +73,13 @@ The record links each run's input/output NOR hashes, allowing persistence to
 be checked without publishing any generated variable-store contents. Failed
 runs preserve the previous NOR file. Concurrent runs cannot share one store.
 
+Older receipts record `mode: interactive` but not how host input reached the
+guest. That field alone cannot distinguish working serial-stdin input from
+QMP keyboard events, which do not reach this profile's UART. Current receipts
+record `console_input_transport: serial-stdin`; scheduled script attempts also
+record `console_script.transport`. These identify the host transport, not
+guest execution: the guest's command output is still required as evidence.
+
 ## PXE evidence
 
 The PXE test does not enter setup. Its optional RTL8168C compatibility NIC is
@@ -130,3 +137,36 @@ UEFI boot, not execution of every component in the SoC image.
 The older `run_spark.py` diagnostic deliberately omits the monitor/MM package.
 It remains useful for SEC/DXE entry checks and explicit failure scenarios;
 its continuations are not the full-boot runner.
+## Remaining platform limits and evidence boundaries
+
+### Three declared SMMUs, not three modelled SMMUs
+
+The IORT record, [research/smmu-iort.json](../research/smmu-iort.json),
+declares three 128 KiB windows: `0x13800000`, `0x13000000` and
+`0x14900000`. It supplies neither a PCI root-complex node nor PCI stream-ID
+mappings. The profile backs the windows with an inert, read-zero/write-drop
+region; the guest discovers the declarations but no functional SMMU.
+
+The earlier phrase "three attempts, each a build and a start" overstated
+the retained evidence. There are **two recorded QEMU refusals and a
+source-level structural argument**, not three independently retained
+failure diagnostics:
+
+1. No primary PCI bus: `SMMU is not attached to any PCI bus!`.
+2. Attach all three to the same primary bus: the second refuses with
+   `An iommu is already attached to this bus`.
+3. Source review, **not a third measured failure**:
+   `hw/arm/smmu-common.c:smmu_base_realize()` requires PCI attachment and
+   `hw/pci/pci.c:pci_setup_iommu_per_bus()` rejects a second per-bus IOMMU.
+   These diagnostics are recorded in the research record and confirmed
+   in the local QEMU source; their original startup logs are not retained
+   with a named run here. Any distinct third startup diagnostic is
+   **unverified**.
+
+Thus this QEMU `arm-smmuv3` cannot represent the three instances as the
+firmware declares them **without PCI attachment**. Inventing buses or
+stream mappings would change the platform contract. A standalone SMMU
+model, or measured device/stream mappings and a corresponding platform
+description, would be needed to remove the limitation. Guest-side probe
+failures are distinct evidence from these host startup refusals.
+

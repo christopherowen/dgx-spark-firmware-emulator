@@ -4,6 +4,14 @@
 .section .text.boot, "ax"
 .global _start
 _start:
+    /* A secondary must not clear BSS or program the GIC under the primary's feet, so it parks
+     * before touching anything shared. `secondary_release` and `secondary_entry` are in .data: the
+     * primary's PSCI CPU_ON fills them and sends an event, and the parked core picks the work up.
+     * A core that arrives here before any release waits; nothing about the one-CPU path changes,
+     * because with -smp 1 this core is the only one. */
+    mrs x0, mpidr_el1
+    and x0, x0, #0xff
+    cbnz x0, secondary_park
     ldr x0, =__stack_top
     mov sp, x0
     ldr x0, =vectors
@@ -23,6 +31,36 @@ _start:
     b 1b
 2:  bl boot
     b .
+
+secondary_park:
+    ldr x1, =secondary_release
+1:  ldr x2, [x1]
+    cbz x2, 2f
+    ldr x0, =secondary_context
+    ldr x0, [x0]
+    ldr x3, =secondary_entry
+    ldr x3, [x3]
+    mov x4, #0
+    str x4, [x1]                 /* one release per request */
+    /* Enter the caller's entry point the way a secondary is entered: EL2h, NS set, context in x0. */
+    msr elr_el3, x3
+    mov x4, #0x3c9
+    msr spsr_el3, x4
+    mrs x4, scr_el3
+    orr x4, x4, #1
+    msr scr_el3, x4
+    eret
+2:  wfe
+    b 1b
+
+.section .data, "aw"
+.global secondary_release, secondary_entry, secondary_context
+.balign 8
+/* Filled by PSCI CPU_ON and read by a parked core. .data, not .bss: a secondary must not have to
+ * wait for the primary's BSS clear to see them, and they must survive the clear. */
+secondary_release: .quad 0
+secondary_entry:   .quad 0
+secondary_context: .quad 0
 
 .section .text.vectors, "ax"
 .balign 2048

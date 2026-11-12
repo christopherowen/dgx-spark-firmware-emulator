@@ -16,16 +16,21 @@ class MonitorIntegrationTests(unittest.TestCase):
     def test_world_switch_fp_tls_trng_discovery_bounds_and_timer_ppi(self):
         self.run_guests("monitor_probe.S", None, b"MONITOR PASS", b"MONITOR FAIL")
 
+    def test_a_parked_second_cpu_can_be_started_by_cpu_on(self):
+        self.run_guests("monitor_probe.S", None, b"MONITOR PASS", b"MONITOR FAIL",
+                        cpus=2, extra_defines=["-DTWO_CPUS"])
+
     def test_ns_share_retrieve_release_relinquish_reclaim_and_concurrent_flash(self):
         self.run_guests("memory_probe_start.S", "ffa_memory_probe.c", b"MEMORY PASS", b"MEMORY FAIL")
 
-    def run_guests(self, assembly, c_source, passed, failed):
-        monitor = build_monitor()
+    def run_guests(self, assembly, c_source, passed, failed, cpus=1, extra_defines=()):
+        monitor = build_monitor(cpus=cpus)
         with tempfile.TemporaryDirectory(dir=ROOT / "build", prefix="monitor-test-") as temporary:
             directory = Path(temporary)
             for name, address, defines in (("secure", 0x93a42000, ["-DSECURE_PROBE"]),
                                            ("nonsecure", 0x80800000, [])):
                 obj, elf, binary = [directory / (name + suffix) for suffix in (".o", ".elf", ".bin")]
+                defines = defines + list(extra_defines)
                 subprocess.run([find_tool("clang"), "--target=aarch64-none-elf", *defines, "-c",
                                 str(ROOT / "tests/fixtures" / assembly), "-o", str(obj)], check=True)
                 objects = [str(obj)]
@@ -42,13 +47,16 @@ class MonitorIntegrationTests(unittest.TestCase):
                 subprocess.run([find_tool("llvm-objcopy"), "-O", "binary", str(elf), str(binary)], check=True)
             command = [os.environ["SPARK_QEMU"], "-M", "virt,spark-fw-lab=on,gic-version=3,"
                        "virtualization=on,secure=on", "-cpu", "max,sve=off,sme=off,pauth=off",
-                       "-m", "2G", "-nodefaults", "-display", "none", "-monitor", "none",
-                       "-serial", "stdio", "-nic", "none"]
+                       "-m", "2G", "-smp", str(cpus), "-nodefaults", "-display", "none",
+                       "-monitor", "none", "-serial", "stdio", "-nic", "none"]
             for path, address, cpu in ((monitor, 0x80020000, True),
                                        (directory / "secure.bin", 0x93a42000, False),
                                        (directory / "nonsecure.bin", 0x80800000, False)):
                 command += ["-device", f"loader,file={path},addr={address:#x},force-raw=on" +
                             (",cpu-num=0" if cpu else "")]
+            if cpus > 1:
+                # the secondary has to enter the monitor to park, exactly as the runner arranges
+                command += ["-device", f"loader,file={monitor},addr=0x80020000,force-raw=on,cpu-num=1"]
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT)
             output = bytearray()

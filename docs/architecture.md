@@ -97,8 +97,8 @@ next boot executes.
 
 It is not a GB10. The GPIO/EINT banks, the UART and the RTL8168 model are approximations for the
 paths they are used on; there is no SPI controller in the normal world (the board's belongs to the
-Flash Service partition), one running CPU instead of twenty (a second is modelled, parked until a PSCI
-implementation exists in the monitor), and 2 GiB of DRAM by default instead of board-class memory — the
+Flash Service partition), one running CPU by default instead of twenty (a second can be modelled,
+parked until the monitor's `CPU_ON` releases it), and 2 GiB of DRAM by default instead of board-class memory — the
 profile aliases PCI BAR space over the lowest gigabyte, and the loader tag describes the rest of the
 allocation, so `--memory` beyond that adds usable RAM rather than hidden RAM. Each
 of those is named below with its reason and what would close it, so a result taken here can be
@@ -109,8 +109,8 @@ attributed to the firmware rather than to the model:
 | Where a power loss lands inside a page | the model commits a page and then spends its time; a torn page is a property of the silicon | a part on a bench with a switchable supply |
 | The part's real erase and program times | `--board` applies datasheet-typical values (400 µs a page, 40 ms a sector); the board's own part has not been timed | a metered part, or a timing run on a unit |
 | An eSPI bus or controller | the **service behind it is modelled where it is reachable**: `monitor/fan.c` answers `SMC 0xC400008D` on endpoint `0x8003` exactly as the vendor's `\_SB.FAN0` AML builds it, and that is how the fan results are taken. The eSPI link itself — the peripheral's registers, its cycles on the wire — is not modelled, and no result here depends on it | a test that needs the eSPI link rather than the service |
-| An NVMe device | no measured result depends on the firmware finding a block device | a test that enumerates storage |
-| Board-class RAM and 20 CPUs (two are modelled; the second stays parked until a PSCI implementation exists in the monitor) | the profile enforces one CPU, and the loader tag stops describing memory at `0x100000000`, so at most 2 GiB is usable | a machine profile with more CPUs, the PSCI work that follows it, and a host with the memory |
+| A board-faithful storage topology | emulated NVMe controllers support installer restoration and installed-kernel handoff, not the board's complete storage topology | measured device and stream mappings |
+| Board-class RAM and 20 CPUs (one or two are modelled; `CPU_ON` can release the parked secondary) | the vendor platform description still activates one CPU, and the loader tag stops describing memory at `0x100000000`, so at most 2 GiB is usable | a matching MADT and loader tag, a profile with more CPUs, and a host with the memory |
 
 The tools inspect local artifacts and run the emulator. The separate,
 explicitly invoked hardware collector performs read-only SSH inventory reads.

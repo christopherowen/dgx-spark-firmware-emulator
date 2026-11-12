@@ -140,8 +140,26 @@ With the trace build the run's `run.json` carries `flash_requests` and `smc_call
 answered flash requests and of SMCs that reached the monitor, so a measurement can be quoted
 without re-reading the log.
 
+The retained failed PXE run `20261110T142830.502484Z` has a
+`console_script` receipt for six attempted lines through the former QMP
+`send-key` path. Source tracing shows that `-nodefaults -display none
+-serial stdio` has no keyboard handler to receive those events; this is
+not a newly measured guest failure, and no execution of those six lines
+is established. The run is retained as a failed attempt, not input proof.
+It is the only retained `boot_spark.py` run with a `console_script` receipt;
+the installer-shell scripts used `run_linux.py`'s separate serial-stdin path.
+Other historical `mode: interactive` receipts do not identify the input
+mechanism and cannot establish it retrospectively.
+
+The broken helper was introduced after PR #2's tip `074b1aa`; it does not
+invalidate that era's setup/navigation evidence. Those paths already wrote
+ESC, right-arrow and interactive input through `process.stdin.write`.
+For example, `20261109T190146.460164Z` records `mode: setup_test` and
+`keyboard_navigation_verified` through that serial path, not the later QMP helper.
+
 `--accept-mmap-notify` answers the firmware's DRAM notification (`0xc4000122`) with success instead of
-`NOT_SUPPORTED`. It exists so the two answers can be compared boot for boot; with the default monitor a
+`NOT_SUPPORTED`. It changes only the return status, is off by default, and establishes no isolation.
+It exists so the two answers can be compared boot for boot; with the default monitor a
 boot lands on the same store image either way, so the choice does not affect measured behaviour.
 
 ## Counting reboot cycles instead of seconds
@@ -292,11 +310,12 @@ the pass condition is shell entry, not a clean platform initialization report.
 
 ## Two CPUs, and what the second one does
 
-The profile models one or two CPUs. With `--smp 2` the machine starts the primary and holds the
-second parked: the monitor implements no PSCI, so nothing services `CPU_ON`. That is measured, not
-assumed — a run tracing the firmware entry with `--smp 2` records `trace_per_cpu: {"cpu0": 1}` and
-`secondary_cpus: "parked until started"`, so a receipt cannot imply parallel execution that did not
-happen.
+The profile models one or two CPUs. With `--smp 2` the monitor initially parks the
+secondary; `CPU_ON` publishes its entry and context and releases it, and `AFFINITY_INFO`
+reports its transition from off to on. The two-CPU synthetic fixture checks that path.
+The earlier firmware-entry trace (`trace_per_cpu: {"cpu0": 1}`) shows only that the
+secondary had not been started in that run, not that no release path exists.
+The vendor MADT and loader tag still describe one active processor.
 
 ## Asking the firmware what settings exist
 

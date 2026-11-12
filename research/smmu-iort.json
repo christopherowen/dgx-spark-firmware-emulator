@@ -1,0 +1,79 @@
+{
+  "what_this_is": "The three SMMUv3 instances the vendor firmware's IORT declares, as the guest sees them. This is what a QEMU model has to match: base, size, and the four interrupt IDs per instance. It does not claim anything about stream-ID mappings, because the IORT carries none for PCI.",
+  "source": {
+    "table": "ACPI IORT, 3904 bytes, dumped by the harness from a boot of vendor UEFI 2.158.15 under this profile",
+    "run": "firmware/runs/20261109T065836.074857Z (acpi-IORT-0x87fe8018.bin; the dump is ignored, not committed)",
+    "how": "iasl -d on the dumped IORT; the SMMUv3 nodes are type 04 and the ITS group is type 01",
+    "why_it_matters": "the guest binds arm-smmu-v3 against these addresses and claims them in /proc/iomem, while the profile backs them with an inert window (-10 priority), so to the guest a real SMMU exists and does nothing"
+  },
+  "iort_node_summary": {
+    "type_00_padding": 1,
+    "type_01_its_group": 1,
+    "type_04_smmuv3": 3,
+    "type_03_root_complex": 0,
+    "id_mappings_for_pci": 0
+  },
+  "instances": [
+    {
+      "linux_name": "arm-smmu-v3.0.auto",
+      "base": "0x13800000",
+      "size": "0x20000",
+      "irq": {
+        "event": 342,
+        "pri": 347,
+        "cmd_sync": 341,
+        "gerror": 340
+      },
+      "iort_flags": "0x1 (COHACC override)"
+    },
+    {
+      "linux_name": "arm-smmu-v3.1.auto",
+      "base": "0x13000000",
+      "size": "0x20000",
+      "irq": {
+        "event": 366,
+        "pri": 371,
+        "cmd_sync": 365,
+        "gerror": 364
+      },
+      "iort_flags": "0x1 (COHACC override)"
+    },
+    {
+      "linux_name": "arm-smmu-v3.2.auto",
+      "base": "0x14900000",
+      "size": "0x20000",
+      "irq": {
+        "event": 397,
+        "pri": null,
+        "cmd_sync": 396,
+        "gerror": 395
+      },
+      "iort_flags": "0x1 (COHACC override)"
+    }
+  ],
+  "interrupt_numbers": "These are ACPI GSIVs, which equal the GIC INTID for SPIs. The IORT gives them as 0x156/0x15B/0x155/0x154 for the first instance, 0x16E/0x173/0x16D/0x16C for the second and 0x18D/none/0x18C/0x18B for the third; the values above are decimal.",
+  "qemu_model": {
+    "type": "arm-smmuv3 (TYPE_ARM_SMMUV3), a sysbus device with one 0x20000 mmio region and four irqs",
+    "irq_order": "index 0 = event, 1 = PRI, 2 = cmdq sync, 3 = gerror (include/hw/arm/smmuv3.h: SMMU_IRQ_EVTQ, SMMU_IRQ_PRIQ, SMMU_IRQ_CMD_SYNC, SMMU_IRQ_GERROR)",
+    "creation_pattern": "hw/arm/virt.c's create_smmu(): qdev_new, set primary-bus, memory and secure-memory links, sysbus_realize_and_unref, sysbus_mmio_map(0, base), then sysbus_connect_irq per line",
+    "mapping_note": "the profile's inert SoC block is added with priority -10, so a device mapped at priority 0 over the same range wins without carving the block apart",
+    "third_instance": "its PRI line is 0 in the IORT, so the model should leave that irq unconnected rather than inventing an interrupt",
+    "cannot_be_modelled_as_declared": {
+      "measured": "two attempts have named QEMU refusals in this record: with no primary-bus QEMU refuses at realize (\"SMMU is not attached to any PCI bus!\"), and with primary-bus on all three it refuses the second (\"An iommu is already attached to this bus\"). The original startup logs are not associated with a retained run here; the earlier count of three measured attempts is unsupported by the retained diagnostics.",
+      "source_review": "hw/pci/pci.c:3321 rejects a second per-bus IOMMU and hw/arm/smmu-common.c:951 requires PCI attachment. These source guards confirm the limitation structurally; they are not a third measured startup failure.",
+      "consequence": "QEMU's arm-smmuv3 cannot represent three instances that the firmware declares with no PCI attachment. Attaching one would claim a translation the IORT does not describe, and would route the NIC's DMA through an IOMMU with no stream IDs — the opposite of a faithful model",
+      "verdict": "the faithful model is the one already in place: the three windows stay inert, the guest claims them and the driver binds to nothing real, and the record says so rather than pretending a model exists",
+      "would_change_it": "an SMMU model that does not require a PCI bus (QEMU has none), or a platform description that maps a device to one of these instances"
+    }
+  },
+  "not_established": [
+    "whether modelling these three instances changes the NVMe probe's -EPROBE_DEFER (measured: the deferred device carries no supplier link, so the SMMU is not its dependency)",
+    "what stream IDs each instance owns — the IORT has no ID mappings for PCI, so a faithful model cannot yet say which device goes through which SMMU",
+    "whether the guest would attach PCI devices to them (no ID mappings and no root-complex node means the answer is probably no, which is why modelling them is safe rather than transformative)"
+  ],
+  "how_to_make_the_change": {
+    "warning": "do not hand-edit hunks in qemu/patches/0001-spark-fw-address-profile.patch: a single blank context line that loses its leading space, or an added block spliced into an existing hunk, makes git apply reject the file while patch(1) still accepts it — the builder uses git apply, so the failure surfaces as 'corrupt patch' at build time",
+    "method": "apply the patch by building once, edit build/qemu-src/hw/arm/virt.c, then regenerate the whole patch as a diff against the pristine tree and re-apply it from scratch to confirm git apply --check passes before committing",
+    "verified_by": "git apply --check in a throwaway git clone of the pristine v11.1.2 tree"
+  }
+}

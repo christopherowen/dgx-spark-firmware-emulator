@@ -198,3 +198,180 @@ error, no further output, no setup. Entering at EL2 is what this firmware requir
 A 3 GiB guest is the useful size (the profile aliases PCI space over the first gigabyte, so the guest
 sees two). The harness refuses to start one without roughly 1.25× that in `MemAvailable`; on a host
 under memory pressure the run is skipped rather than run into swap.
+
+## Asking the guest a question
+
+The vendor kernel's `/init` lives in an **embedded** initramfs with no shell on any path an injected
+image can reach, so `init=/bin/sh` is ignored and a diagnostic script has nothing to interpret it. A
+probe therefore has to be a static ELF that talks to the kernel directly: `tests/fixtures/guest_probe.c`
+is one, built `-nostdlib -static` for `aarch64-linux-gnu`, raw syscalls only.
+
+It is injected by appending it as `/init` to the vendor's `INITRD` and rebuilding the ESP: the kernel
+unpacks the external initrd *after* the embedded one, so this file shadows the vendor init. Measured
+consequences, both worth having in mind before using it:
+
+- **it works.** The probe mounted `/proc`, `/sys` and `debugfs`, read `/proc/cmdline`, `/proc/iomem`
+  and `/sys/...`, and printed all of it to the console;
+- **it displaces the init that loads the modules.** With the probe as `/init`, no module is loaded, so
+  the NVMe driver never probes and the `-EPROBE_DEFER` this was written to explain cannot occur. The
+  deferred list is empty for that reason, not because nothing deferred;
+- **there is nothing to hand control back to.** Measured in that boot: `/bin`, `/sbin` and `/usr/bin`
+  do not exist (ENOENT), and `/` itself refuses `O_DIRECTORY` with EINVAL, so this rootfs has no shell
+  on any path. The vendor "init" is a static binary that `/init` names, and an injected `/init`
+  necessarily replaces it — there is no second init to `exec`.
+
+So the `-517` cannot be reproduced by injecting an init unless that init also performs the vendor's
+module loading. The modules are `.ko.zst` inside the same INITRD, which a freestanding probe cannot
+decompress; the practical route is to decompress them on the host, place the `.ko` files in the
+injected archive, and `finit_module` them from the probe — or to model the SMMU first, which is
+independently the largest known difference between this profile and the machine.
+
+What the same boot established about the platform, from `/proc/iomem`: three `arm-smmu-v3` instances
+claim `0x13000000`, `0x13800000` and `0x14900000` — the addresses the vendor's IORT declares — while
+the profile backs none of them. The SMMU is therefore a real device to the guest and an inert window
+to the model, which is the largest remaining difference between this profile and the machine it
+models.
+
+## Why the NVMe driver defers, and what that costs
+
+Measured with the injected probe and the modules loaded by hand from the archive:
+
+- the device is put on the deferred list **with no supplier bound**, and nothing on the list explains
+  it;
+- ten seconds later the kernel prints `nvme 000f:00:02.0: deferred probe timeout, ignoring dependency`
+  and the probe returns **0** — the driver binds and the namespaces appear;
+- with `deferred_probe_timeout=1` on the command line, the vendor flow binds **both** controllers at
+  9 s (`nvme nvme0: pci function 000f:00:02.0`, `nvme nvme1: …`) and `nvme0n1` appears.
+
+So the `-517` is the driver's own probe, not a missing device behind it: the PCI function's sysfs
+directory carries **no `supplier:*` links**, so it is not waiting on the SMMU — or on any other
+device — and the kernel's `deferred_probe_timeout` is the only thing that eventually proceeds with the
+probe anyway. Collapsing that timeout makes the boot deterministic.
+
+Instrumentation is exhausted for this question, and that is worth writing down so nobody repeats it:
+
+- `dyndbg="file drivers/nvme/host/* +p"` produces no output at all, and a global `dyndbg=+p` run has
+  nothing between `really_probe: probing driver nvme` and `Added to deferred list` — the returning
+  path carries no `dev_dbg`;
+- the vendor kernel ships headers, not sources, so the call cannot be read out of a tree.
+
+What is left is to bound the cost rather than to explain it: one second of delay, one documented flag,
+and the boot is deterministic. A future attempt should start from the vendor's source for this kernel
+version, not from another hypothesis.
+
+Independently of that, the three SMMUv3 units the vendor's IORT declares at `0x13000000`,
+`0x13800000` and `0x14900000` are still unmodelled — the guest claims their windows and the profile
+backs them with an inert region — but they are no longer suspected as the cause of this deferral.
+
+What that did **not** fix: with a disk present, the installer still stops at its `--- Command Line
+Check` stage for the remainder of a 700-second run, so that stage is a separate blocker from the disk.
+
+That conclusion was premature, and the correction is worth keeping because the wrong version was
+plausible. The installer does not stall after the command-line check: without `noui` it execs
+`/bin/dgx-spark-recovery`, a TUI on a console this profile does not provide, so it goes silent while it
+is working. With `noui` it proceeds, and the next thing it wants is media, not a disk.
+
+## The media is a `/dev/sd??`, and USB cannot supply one here
+
+`init_mount` sleeps five seconds, then for up to ten attempts tries `/dev/sd??` as a partition, `/dev/sd?`
+as a whole-disk ISO, and `/dev/sr0` as ISO, requiring `fastos-release.txt` at the mount root, and drops
+to a shell if none of that works. Two facts decide how this machine can satisfy it:
+
+- `init_prep` runs `modprobe xhci-plat-hcd` — the **platform** xHCI driver. The six `TYPE_XHCI_SYSBUS`
+  controllers the profile creates are memory-mapped correctly, but no firmware node describes them, so
+  no driver binds; the recovery initramfs also carries no generic `xhci_pci`. A `usb-storage` device is
+  therefore unreachable, and pinning it to a controller bus cannot change that.
+- the guest does drive **virtio-scsi**, which names its disk `/dev/sda`.
+
+So the media is attached as a `scsi-hd` on a `virtio-scsi-pci` controller, and `--target` attaches the
+install disk as `-device nvme` because `init_mount` hardcodes `/dev/nvme0n1`. Both are consequences of
+the installer's own contract, not concessions: with them the run reaches
+
+```
+    - No UI
+    - Skipping FW Update
+-- Wait for USB Enumeration
+Mounted /dev/sda1, checking for fastos-release.txt...
+Found fastos-release.txt on /dev/sda1
+-- Format Disk
+nvme0n1: p1 p2
+mkfs.fat 4.2 (2021-01-31)
+```
+
+and stops only because that media had no payload: `init_restore` mounts `/dev/nvme0n1p2`, which the
+payload was supposed to fill, so `DATA_UUID` is empty and it exits on
+`Error: NEWGUID environment variable not set`. `tools/make_recovery_key.py` builds the media the rest of
+the flow needs from the vendor archive — `fastos-release.txt`, `efi.tar.xz`, `fastos.partaa`,
+`fastos.partab` — into a partition on a `virtio-scsi` disk.
+
+## The installed disk boots to the installed kernel under the vendor UEFI
+
+After `init_restore` completed (37 GB root, `e2fsck`, `resize2fs`, new UUID, fstab and `grub.cfg`
+rewritten), the target was attached to the full-boot runner and the firmware booted it:
+
+```
+Version 2.22.1295. Copyright (C) 2026 AMI … Ver: 0ACUM028
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x000f0510]
+[    0.000000] Linux version 7.0.0-1019-nvidia … 7.0.0-1019.19~24.04.2-nvidia
+[    0.000000] earlycon: uart0 at MMIO32 0x0000000016a00000
+[    0.000000] printk: legacy bootconsole [uart0] enabled
+```
+
+`7.0.0-1019` is the kernel inside the restored root; the recovery media carries `7.0.0-1018`. So the
+chain ran: firmware → `EFI/BOOT/BOOTAA64.EFI` on `nvme0n1p1` → shim → GRUB → `/boot` on `nvme0n1p2` →
+the installed kernel. No NVRAM entry was needed, which is why the earlier `efibootmgr` failure did not
+block this: **the install is complete and the disk is bootable.**
+
+Two things must not be read into that log:
+
+- `boot_spark.py`'s verdict for that run was `setup/navigation not reached before the boot timeout`. That
+  is the runner's firmware-UI check, and with a bootable disk the firmware never enters setup. It is not
+  a statement about the kernel.
+- GRUB prints nothing on this UART. Its console is the EFI text console, which is not modelled, so the
+  gap between the firmware banner and the kernel line is expected.
+
+## Why it goes silent after the bootconsole, and what is *not* established
+
+The kernel stops printing immediately after `legacy bootconsole [uart0] enabled`, and stayed silent for
+the remaining 57 minutes of a 3300-second run. The console model is not the explanation: at `0x16a00000`
+the profile maps a real 16550 (`serial_mm_init`, regshift 2) inside a container, overlapped by a scratch
+window so a vendor-register probe reads zero instead of aborting. Earlycon and the driver therefore talk
+to the same controller.
+
+The log names a suspect the kernel would hit as soon as it walks the EFI memory map:
+
+```
+[SsmpuDxe]: SsmpuDxeQueryTag 207 <#> Failed to find mem_info
+[SsmpuDxe]: SsmpuDxeQueryTag 220 <#> Status=Invalid Parameter
+[SsmpuDxe]: SsmpuDxeEntry 545 <#> Failed to Query MMAP_DISPLAY_FRM
+```
+
+A guest whose RAM starts at 1 GiB depends entirely on that map being right. Whether the silence is an
+incomplete memory map, a hang in early memory init, or something later that stops writing to this
+console is **not established** — the two candidates are named so the next probe starts from evidence
+rather than from a guess. The next probe is a run with `nokaslr ignore_loglevel earlycon keep_bootcon`
+and, if it stays silent, monitor-side tracing of the first post-console accesses.
+
+## The installed disk can be inspected from inside the emulator
+
+No host tool here reads ext4 at a partition offset (`debugfs` has no offset option and `fuse2fs` is not
+installed), so the emulator reads its own install: `run_linux.py` now takes `--console-script`,
+`--console-after` and `--console-delay` and types the file's lines into the guest, which with `-nographic`
+arrives on the shell that `usb.shell` starts before `init_mount`. Measured from that shell:
+
+```
+# mount /dev/nvme0n1p2 /mnt/root
+EXT4-fs (nvme0n1p2): mounted filesystem 69909700-2b7b-41a4-a817-5d87b823349f r/w
+# ls /mnt/root/boot
+config-7.0.0-1019-nvidia   initrd.img                    system.map-7.0.0-1019-nvidia
+initrd.img-7.0.0-1019-nvidia   vmlinuz                   vmlinuz-7.0.0-1019-nvidia
+# blkid
+/dev/nvme0n1p1: LABEL="EFI"  UUID="D4C3-27CF"      TYPE="vfat"
+/dev/nvme0n1p2: LABEL="root" UUID="69909700-…349f" TYPE="ext4"
+```
+
+The writer is a background thread that must not close the stream: `Popen.communicate()` flushes it
+afterwards, and closing it made that flush raise `flush of closed file`, which replaced the run's output
+and threw away the capture. `tests/test_linux_boot.ConsoleScriptTests` pins both properties — one line
+typed once, stream left open, and a closed stream treated as the guest exiting rather than an error.
+

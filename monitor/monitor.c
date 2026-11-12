@@ -106,6 +106,14 @@ struct context {
 };
 static struct context secure_context, nonsecure_context;
 static int ns_started, ns_pending;
+/* Which direct request is waiting for the secure world, so its answer can be logged as a pair
+ * with the question it answers. Only meaningful under MONITOR_TRACE. */
+static u64 pending_direct;
+
+/* The parked secondary's mailbox, filled by CPU_ON. Defined in start.S's .data so a core that has not
+ * yet run the primary's BSS clear still sees it. */
+extern volatile u64 secondary_release, secondary_entry, secondary_context;
+static u64 secondary_started;
 static u64 ns_rx, ns_tx, sp_rx, sp_tx;
 static u64 *sp_hvc_frame;
 static u64 shared_address, shared_size;
@@ -462,6 +470,24 @@ static int rtc_service(u64 *r) {
     r[4] = data;
     return 1;
 }
+/* PSCI. Two answers have to be truthful before a caller will believe anything else: how many CPUs
+ * this model has, and which of them are running. SPARK_CPU_COUNT comes from the profile's -smp, so a
+ * one-CPU build reports one CPU rather than guessing.
+ *
+ * CPU_ON publishes the parked secondary's entry and context and releases it once.
+ * CPU_OFF returns DENIED: a retired core cannot be restarted by this one-shot model.
+ * PSCI_FEATURES advertises only the queries this monitor reports as supported.
+ */
+#ifndef SPARK_CPU_COUNT
+#define SPARK_CPU_COUNT 1
+#endif
+#define PSCI_AFFINITY_ON   0
+#define PSCI_AFFINITY_OFF  1
+#define PSCI_INVALID_PARAMETERS 0xfffffffeUL
+#define PSCI_NOT_SUPPORTED 0xffffffffUL
+#define PSCI_DENIED        0xfffffffdUL
+#define PSCI_ALREADY_ON    0xfffffffbUL
+
 /* SMCCC TRNG 1.0 backed by QEMU RNDR and its host CSPRNG. */
 static int trng_supported(u32 fid) {
     return fid == 0x84000050 || fid == 0x84000051 || fid == 0x84000052 ||
@@ -581,6 +607,21 @@ void handle(u64 *r, u64 level) {
             WRITE(SCR_EL3, SCR | 1);
             restore(&nonsecure_context, r);
             ns_pending = 0;
+#ifdef MONITOR_TRACE
+            if (pending_direct) {
+                console_puts("\nDIRECT_RESP fid=");
+                hex(pending_direct);
+                console_puts(" a0=");
+                hex(r[0]);
+                console_puts(" a1=");
+                hex(r[1]);
+                console_puts(" a2=");
+                hex(r[2]);
+                console_puts(" a3=");
+                hex(r[3]);
+                pending_direct = 0;
+            }
+#endif
         } else {
             console_puts("MON: bad secure yield\n");
             for (;;) {
@@ -608,7 +649,10 @@ void handle(u64 *r, u64 level) {
         return;
     }
     if (fid == 0x8400000a) {
-        r[0] = -1UL;
+        /* Bit 0: a 32-bit variant is answered. Bit 1: a 64-bit variant is answered. Only the calls
+         * this monitor really answers are advertised. */
+        u32 feature = (u32)r[1];
+        r[0] = (feature == 0x84000004 || feature == 0xc4000004) ? 3 : -1UL;
         return;
     }
     if (fid == 0x84000069) {
@@ -859,6 +903,7 @@ void handle(u64 *r, u64 level) {
         }
         save(&nonsecure_context, r);
         ns_pending = 1;
+        pending_direct = r[1];
         copy(sp_hvc_frame, r, 8);
         WRITE(SCR_EL3, SCR);
         restore(&secure_context, r);
@@ -875,6 +920,46 @@ void handle(u64 *r, u64 level) {
         return;
     }
 #endif
+    if (fid == 0xc4000004 || fid == 0x84000004) {
+        /* AFFINITY_INFO: level 0 asks about one CPU, level 1 about the cluster. */
+        u64 target = r[1], level = r[2];
+        if (level > 1 || (level == 1 && (target >> 8)))
+            r[0] = PSCI_INVALID_PARAMETERS;
+        else if (level == 1)
+            r[0] = PSCI_AFFINITY_ON;
+        else if ((target & ~0xffUL) || (target & 0xff) >= SPARK_CPU_COUNT)
+            r[0] = PSCI_INVALID_PARAMETERS;
+        else if ((READ(MPIDR_EL1) & 0xff) == (target & 0xff))
+            r[0] = PSCI_AFFINITY_ON;
+        else
+            r[0] = secondary_started ? PSCI_AFFINITY_ON : PSCI_AFFINITY_OFF;
+        return;
+    }
+    if (fid == 0xc4000003 || fid == 0x84000003) {   /* CPU_ON */
+        u64 target = r[1], entry = r[2], context = r[3];
+        if (SPARK_CPU_COUNT < 2 || (target & ~0xffUL) || (target & 0xff) != 1 || !entry) {
+            r[0] = PSCI_INVALID_PARAMETERS;
+            return;
+        }
+        if (secondary_started) {
+            r[0] = PSCI_ALREADY_ON;
+            return;
+        }
+        /* Publish the work, then tell the parked core to look: it spins on `secondary_release`
+         * between WFE instructions, so one event is enough. */
+        secondary_context = context;
+        secondary_entry = entry;
+        secondary_release = 1;
+        secondary_started = 1;
+        __asm__ volatile("dsb sy\n sev" ::: "memory");
+        r[0] = 0;
+        return;
+    }
+    if (fid == 0xc4000002 || fid == 0x84000002) {   /* CPU_OFF */
+        /* A core that asks to be retired cannot be restarted: the model keeps one-shot CPUs. */
+        r[0] = PSCI_DENIED;
+        return;
+    }
     if ((fid & 0xffff) >= 0x60 && (fid & 0xffff) <= 0x8f)
         unsupported(r);
     else

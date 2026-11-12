@@ -47,3 +47,37 @@ class LinuxBootTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConsoleScriptTests(unittest.TestCase):
+    """The guest console writer, tested without a guest.
+
+    Two defects lived here and both hid the run's output instead of producing it: the thread closed
+    the stream that `Popen.communicate()` flushes afterwards, and an unguarded write raised from a
+    background thread. Neither can be observed from a boot test that only asserts a milestone, so
+    they are pinned directly.
+    """
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("run_linux_module",
+                                                     ROOT / "tools" / "run_linux.py")
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        import tempfile
+        self.directory = Path(tempfile.mkdtemp())
+        self.script = self.directory / "script.txt"
+        self.script.write_text("mount /dev/nvme0n1p2 /mnt\nls /mnt/boot\n")
+
+    def test_each_line_is_typed_once_and_the_stream_stays_open(self):
+        import io
+        stream = io.BytesIO()
+        self.module.type_script(stream, self.script, 0, 0)
+        self.assertEqual(stream.getvalue(), b"mount /dev/nvme0n1p2 /mnt\nls /mnt/boot\n")
+        self.assertFalse(stream.closed, "communicate() flushes this stream after the thread returns")
+
+    def test_a_closed_stream_is_not_an_error(self):
+        import io
+        stream = io.BytesIO()
+        stream.close()
+        self.module.type_script(stream, self.script, 0, 0)

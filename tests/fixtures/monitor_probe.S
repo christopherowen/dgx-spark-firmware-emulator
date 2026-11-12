@@ -123,6 +123,67 @@ secure_request:
     ldr x5, =0x84000061
     cmp x0, x5
     b.ne fail
+    /* PSCI: with two CPUs modelled, CPU_ON must really start the parked core and AFFINITY_INFO must
+     * agree afterwards; a one-CPU build refuses both. */
+#ifdef TWO_CPUS
+    ldr x0, =0xc4000004
+    mov x1, #1
+    mov x2, #0
+    smc #0
+    cmp w0, #1              /* OFF until started */
+    b.ne fail
+    ldr x0, =0xc4000003
+    mov x1, #1
+    adr x2, secondary_idle
+    mov x3, #0
+    smc #0
+    cbnz w0, fail
+    ldr x0, =0xc4000004
+    mov x1, #1
+    mov x2, #0
+    smc #0
+    cbnz w0, fail           /* ON now */
+    b psci_basics
+secondary_idle:
+    wfe
+    b secondary_idle
+psci_basics:
+#endif
+    /* PSCI: the caller's own CPU must read as on and an affinity this model does not have must be
+     * refused. */
+    ldr x0, =0xc4000004
+    mrs x1, mpidr_el1
+    and x1, x1, #0xff      /* the affinity value at level 0, without MPIDR's RES1 bit */
+    mov x2, #0
+    smc #0
+    cbnz x0, fail
+    ldr x0, =0xc4000004
+    mov x1, #7
+    mov x2, #0
+    smc #0
+    cmn w0, #2             /* INVALID_PARAMETERS, zero-extended from 32 bits */
+    b.ne fail
+    ldr x0, =0x84000004
+    mov x1, #0
+    mov x2, #1
+    smc #0
+    cbnz x0, fail
+#ifndef TWO_CPUS
+    /* With one CPU modelled there is no parked core to start, so the answer is a parameter error
+     * rather than a promise. */
+    ldr x0, =0xc4000003
+    mov x1, #1
+    mov x2, #0
+    mov x3, #0
+    smc #0
+    cmn w0, #2             /* INVALID_PARAMETERS, zero-extended from 32 bits */
+    b.ne fail
+#endif
+    ldr x0, =0x8400000a
+    ldr x1, =0xc4000004
+    smc #0
+    cmp x0, #3
+    b.ne fail
     /* Two real EL3/S-EL2/NS-EL2 world switches must preserve FP and TLS. */
     mov x19, #2
 request:

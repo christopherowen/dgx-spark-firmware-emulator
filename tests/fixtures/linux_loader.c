@@ -310,11 +310,17 @@ efi_status _start(efi_handle image, efi_system_table *table)
      * what it waits for, so the early console stays to keep a stall visible.
      * nokaslr: a sampled or disassembled address then names a kernel offset.
      * initcall_debug: a boot that stops printing names the initialiser it stopped in.
-     * efi=noruntime: this profile does not implement the firmware's runtime variable service (it
-     * answers FF-A direct requests to endpoint 0x8004 with "unsupported"), so the kernel's
-     * efivar_init spins; without runtime services the boot proceeds. */
+     * efi=noruntime: kept because EFI variables do not work under this profile either way — the
+     * initramfs reports "mounting none on /sys/firmware/efi/efivars failed: Operation not supported".
+     * Measured with the flag removed: efisubsys_init still returns 0 in 1 ms and the boot reaches
+     * userspace, so this is not preventing a kernel spin; the earlier note saying it did is stale. */
+    /* deferred_probe_timeout=1: NVMe probing deferred until the default ten-second timeout,
+     * then bound in the measured recovery boot. No supplier:* links were present, and the
+     * SMMU was ruled out as the dependency. One second makes the disk available before the
+     * installer looks for it; this is a timeout workaround, not an IOMMU implementation.
+     * Remove it only when probing completes before the installer needs the disk without it. */
     char16 *options = ascii_to_utf16("console=ttyS0,115200 earlycon=uart8250,mmio32,0x16a00000 acpi=force "
-                                     "keep_bootcon nokaslr initcall_debug "
+                                     "keep_bootcon nokaslr initcall_debug deferred_probe_timeout=1 "
                                      "efi=noruntime ignore_loglevel initrd=\\INITRD");
     /* This firmware refuses LoadImage with a NULL parent image handle, and refuses a file-system
      * handle as parent; an image handle is required, and that is the one thing about the call a

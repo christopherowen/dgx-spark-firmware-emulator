@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.build_monitor import NOR_SIZES, build_monitor
 from tools.download_firmware import require_ignored_untracked
+from tools.console import type_line
 from tools.dxe_protocols import inspect_protocols
 from tools.handoff import boot_arguments
 from tools.prepare_mm import MM_SHA256, prepare_mm
@@ -188,13 +189,31 @@ def nvme_arguments(images, path_for=local_path):
     return arguments, entries
 
 
+def die_with_parent():
+    """Have the child take SIGKILL when this process dies.
+
+    A boot that is killed -- by a job runner, by a timeout, by hand -- otherwise leaves QEMU running:
+    it keeps the state file locked, so every later launch fails with `[Errno 11]` from the lock and
+    silently reports nothing, and it keeps burning a core while the serial logs it writes belong to a
+    run nobody is watching any more.
+    """
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(1, 9, 0, 0, 0)  # PR_SET_PDEATHSIG, SIGKILL
+    except (OSError, AttributeError):
+        pass
+
 def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=None, pxe_image=None,
         pxe_marker=None, rtc_base=None, seed=None, firmware_version=DEFAULT_VERSION,
         memory=None, smp=None, nor_size=NOR_STATE_SIZE, gdb_port=None,
         allow_marker_only=False, nor_offset=0x3000000, code_offset=None, trace=False,
         accept_mmap_notify=False, gwdt_timeout_ms=None, stop_after_boots=None,
         program_model=None, code_offset_source="not-sliced", trace_pc=None, trace_limit=0, trace_sample=0,
-        extended_ram=False, nvme_images=None):
+        trace_start=0, trace_exceptions=False,
+        extended_ram=False, nvme_images=None, qmp_path=None, console_script=None,
+        console_after=0.0, console_delay=0.03, usb_image=None,
+        no_setup_escape=False):
     qemu = shutil.which(qemu)
     if qemu is None:
         raise ValueError("build the Spark QEMU profile first: python3 tools/build_qemu.py")
@@ -215,7 +234,7 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
     monitor = build_monitor(policy, write_us, erase_us, nor_size, nor_offset, trace,
                             accept_mmap_notify, gwdt_timeout_ms, ram_top=ram_top,
                             rtc_base=epoch_seconds(rtc_base), code_offset=code_offset,
-                            program_model=program_model,
+                            program_model=program_model, cpus=smp or 1,
                             code_size=(prepared_directory(firmware_version) / "uefi.fd").stat().st_size
                             if code_offset is not None else None)
     prepared_firmware = prepared_directory(firmware_version) / "uefi.fd"
@@ -272,8 +291,13 @@ def run(qemu, mode, timeout, state_path, policy="armed", write_us=0, erase_us=No
                           accept_mmap_notify=accept_mmap_notify, gwdt_timeout_ms=gwdt_timeout_ms,
                           nor_offset=nor_offset, code_offset=code_offset,
                           stop_after_boots=stop_after_boots, program_model=program_model,
-                          code_offset_source=code_offset_source,
-                          trace_pc=trace_pc, trace_limit=trace_limit, trace_sample=trace_sample, extended_ram=extended_ram,
+                          code_offset_source=code_offset_source, qmp_path=qmp_path,
+                          console_script=console_script, console_after=console_after,
+                          no_setup_escape=no_setup_escape,
+                          console_delay=console_delay, usb_image=usb_image,
+                          trace_pc=trace_pc, trace_limit=trace_limit, trace_sample=trace_sample,
+                          trace_start=trace_start, trace_exceptions=trace_exceptions,
+                          extended_ram=extended_ram,
                           nvme_images=nvme_images,
                           allow_marker_only=allow_marker_only, firmware_path=firmware_path)
 
@@ -286,7 +310,10 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                nor_offset=0x3000000, code_offset=None, stop_after_boots=None,
                allow_marker_only=False, firmware_path=None, program_model=None,
                code_offset_source="not-sliced", trace_pc=None, trace_limit=0, trace_sample=0,
-               extended_ram=False, nvme_images=None):
+               trace_start=0, trace_exceptions=False,
+               extended_ram=False, nvme_images=None, qmp_path=None, console_script=None,
+               console_after=0.0, console_delay=0.03, usb_image=None,
+               no_setup_escape=False):
     firmware_directory = prepared_directory(firmware_version)
     if firmware_path is None:
         firmware_path = firmware_directory / "uefi.fd"
@@ -342,15 +369,21 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
         ExitStack() as resources,
         local_path(directory / "serial.log").open("wb") as log,
     ):
+        # Back the GIC ITS at 0x06840000, where the guest's MADT declares it.
+        # NVMe probing deferred in the recovery boot but completed at its timeout; the capture
+        # does not establish missing ITS as the cause or a permanent wait. No supplier links
+        # were present, and the SMMU was ruled out as the dependency.
         command = [qemu, "-M", "virt,spark-fw-lab=on,spark-rot-error-replies=on,"
-                   "gic-version=3,virtualization=on,secure=on", "-accel", "tcg",
+                   "gic-version=3,virtualization=on,secure=on,its=on", "-accel", "tcg",
                    "-cpu", "max,sve=off,sme=off,pauth=off",
                    "-m", memory or "2G", "-smp", str(smp or 1),
                    "-nodefaults", "-display", "none", "-monitor", "none", "-serial", "stdio",
-                   "-qmp", f"unix:{temporary}/qmp,server=on,wait=off",
+                   "-qmp", (f"unix:{qmp_path},server=on,wait=off" if qmp_path
+                            else f"unix:{temporary}/qmp,server=on,wait=off"),
                    # cpu_reset is what makes a reboot explainable: the watchdog, which is
                    # what resets the board-faithful image, logs its expiry there.
-                   "-d", "guest_errors,unimp,cpu_reset", "-D",
+                   "-d", ("guest_errors,unimp,cpu_reset,int" if trace_exceptions
+                          else "guest_errors,unimp,cpu_reset"), "-D",
                    str(local_path(directory / "qemu.log"))]
         # Diagnostic only: hold the CPU at reset and expose a GDB stub so a driver can
         # break on a firmware address while the guest runs. Never used for receipts.
@@ -420,6 +453,8 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
             options = f"pc={trace_pc:#x}" if trace_pc is not None else ""
             if trace_sample:
                 options += ("," if options else "") + f"sample={int(trace_sample)}"
+            if trace_start:
+                options += ("," if options else "") + f"start={int(trace_start)}"
             command += ["-plugin", f"{plugin},{options},limit={int(trace_limit)}"]
             record["trace_pc"] = trace_pc
             if trace_sample:
@@ -431,16 +466,35 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                                     (handoff, 0x80010000, False), (state, 0xa0000000, False)):
             command += ["-device", f"loader,file={image},addr={address:#x},force-raw=on" +
                         (",cpu-num=0" if cpu else "")]
+        if monitor and (smp or 1) > 1:
+            # The secondary has to enter the monitor to park; without this it starts at QEMU's reset
+            # vector, which holds nothing, and executes zeros. Parking is what gives CPU_ON something
+            # to release later.
+            command += ["-device", f"loader,file={monitor},addr=0x80020000,force-raw=on,cpu-num=1"]
+        if usb_image is not None:
+            usb_image = local_path(usb_image)
+            command += ["-drive", f"if=none,id=usb0,file={usb_image},format=raw,snapshot=on",
+                        "-device", "usb-storage,drive=usb0,serial=SPARKKEY"]
+            record["usb_image"] = {"path": str(usb_image),
+                                   "sha256": hashlib.sha256(usb_image.read_bytes()).hexdigest()}
         record["command"] = command
+        record["console_input_transport"] = "serial-stdin"
         try:
             process = resources.enter_context(subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    preexec_fn=die_with_parent,
                 stderr=subprocess.STDOUT, bufsize=0))
-            qmp = resources.enter_context(Qmp(connect_unix(Path(temporary) / "qmp", process)))
+            qmp = resources.enter_context(Qmp(connect_unix(
+                Path(qmp_path) if qmp_path else Path(temporary) / "qmp", process)))
             selector = resources.enter_context(selectors.DefaultSelector())
             selector.register(process.stdout, selectors.EVENT_READ, "uart")
             if interactive:
                 selector.register(sys.stdin, selectors.EVENT_READ, "keyboard")
+            # A console script is typed once, `console_after` seconds in: a guest with no shell
+            # prompt to wait for (a menuless installer, or init=/bin/sh) needs a deadline, not a
+            # guess about when it is ready.
+            script = (list(console_script.read_text().splitlines()) if console_script else [])
+            script_due = time.monotonic() + console_after if script else None
             deadline = time.monotonic() + timeout
             escape_sent = False
             navigate_at = stop_at = None
@@ -480,6 +534,16 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
                         process.stdin.write(b"\x1b[C")
                         navigation_offset = len(capture)
                         navigate_at = None
+                    if script_due is not None and now >= script_due:
+                        # Pace bytes through the same serial stdin used for ESC and navigation.
+                        # QMP send-key targets keyboard handlers, not this profile's UART.
+                        for line in script:
+                            type_line(process.stdin, line, console_delay)
+                            time.sleep(console_delay * 10)
+                        record["console_script"] = {"lines": len(script),
+                                                   "typed_at": round(now, 3),
+                                                   "transport": "serial-stdin"}
+                        script_due = None
                     for key, _ in selector.select(.05):
                         if key.data == "keyboard":
                             data = os.read(sys.stdin.fileno(), 4096)
@@ -528,7 +592,11 @@ def run_locked(qemu, monitor, package, directory, handoff, state, before, mode, 
 
                         if b"Synchronous Exception" in capture or b"MON: abort" in capture:
                             raise RuntimeError("firmware exception; see this run's local serial.log")
-                        if mode is not RunMode.PXE_TEST and not escape_sent and b"Press <DEL>" in capture:
+                        # ESC is "enter Setup" on this firmware, so sending it dismisses nothing:
+                        # it diverts a disk boot into the setup UI. --no-setup-escape exists to
+                        # separate our own keypress from the firmware's behaviour.
+                        if (not no_setup_escape and mode is not RunMode.PXE_TEST
+                                and not escape_sent and b"Press <DEL>" in capture):
                             process.stdin.write(b"\x1b")
                             escape_sent = True
                         setup_at = marker_at(b"Aptio Setup - AMI")
@@ -990,6 +1058,22 @@ def main():
     parser.add_argument("--pxe-image", type=Path,
                         help="serve this EFI application over the PXE path instead of the "
                              "built-in probe; requires --pxe-test and --pxe-marker")
+    parser.add_argument("--console-script", type=Path, metavar="FILE",
+                        help="type this file's lines into the guest console once --console-after "
+                             "seconds have passed, one line per Enter; a menuless installer or a "
+                             "shell still has to be told what to do")
+    parser.add_argument("--console-after", type=float, default=0.0, metavar="SECONDS",
+                        help="when to start typing the console script (default: as soon as the "
+                             "guest starts)")
+    parser.add_argument("--usb-image", type=Path, metavar="PATH",
+                        help="attach this image as a USB key: the recovery media is a USB key on "
+                             "hardware and the installer looks for /dev/sd* with fastos-release.txt")
+    parser.add_argument("--no-setup-escape", action="store_true",
+                        help="do not send ESC at the firmware's boot prompt: on AMI that key enters "
+                             "Setup rather than dismissing the prompt")
+    parser.add_argument("--qmp-alive", type=Path, metavar="PATH",
+                        help="put the QMP socket at PATH for emulator inspection while the run "
+                             "continues; QMP keyboard events do not type into the serial console")
     parser.add_argument("--gdb", type=int, metavar="PORT",
                         help="diagnostic: hold the CPU at reset and expose a GDB stub on PORT")
     parser.add_argument("--board", action="store_true",
@@ -1039,6 +1123,12 @@ def main():
                              "answers 'where is the guest running' for a boot that stops printing")
     parser.add_argument("--trace-limit", type=int, default=0, metavar="N",
                         help="stop logging after N hits (0, the default, means no limit)")
+    parser.add_argument("--trace-exceptions", action="store_true",
+                        help="add QEMU's 'int' log: every exception and interrupt with the EL that "
+                             "takes it, which is how a guest that never wakes is diagnosed")
+    parser.add_argument("--trace-start", type=int, default=0, metavar="N",
+                        help="do not sample before the N-th executed block: a sampler that runs from "
+                             "reset otherwise spends its whole limit on the firmware phase")
     parser.add_argument("--flash-trace", action="store_true",
                         help="build a monitor that logs each answered flash request to the console")
     parser.add_argument("--flash-policy", choices=("armed", "open"), default="armed",
@@ -1142,8 +1232,13 @@ def main():
                         code_offset_source=code_offset_source,
                         program_model=args.program_model, trace_pc=args.trace_pc,
                         trace_limit=args.trace_limit, trace_sample=args.trace_sample,
+                        trace_start=args.trace_start,
+                        trace_exceptions=args.trace_exceptions,
                         extended_ram=args.extended_ram,
-                        nvme_images=args.nvme_image,
+                        nvme_images=args.nvme_image, qmp_path=args.qmp_alive,
+                        console_script=args.console_script, console_after=args.console_after,
+                        no_setup_escape=args.no_setup_escape,
+                        usb_image=args.usb_image,
                         accept_mmap_notify=args.accept_mmap_notify,
                         gwdt_timeout_ms=args.gwdt_timeout_ms,
                         stop_after_boots=args.stop_after_boots)
