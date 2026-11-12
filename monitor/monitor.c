@@ -2,6 +2,8 @@
  * Original experimental Spark firmware laboratory monitor.
  */
 #include "nor.h"
+#include "fan.h"
+#include "spbm.h"
 #include "ffa_memory.h"
 
 typedef unsigned long u64;
@@ -14,7 +16,24 @@ typedef unsigned short u16;
         x;                                                                                         \
     })
 #define WRITE(reg, x) __asm__ volatile("msr " #reg ", %0" ::"r"((u64)(x)) : "memory")
-#define SCR ((1UL << 10) | (1UL << 11) | (1UL << 8) | (1UL << 18))
+/* The SCR_EL3 this profile presents, including the enables for the newer system registers a current
+ * Linux kernel programs in its early boot. Without them each write traps to EL3, and an EL3 that
+ * does not answer it aborts the boot:
+ *
+ *   25 ENSCXT    SCXTNUM_EL0/EL1 (per-task context numbers)
+ *   27 FGTEN     the fine-grained trap registers
+ *   38 HXEN      HCRX_EL2
+ *   39 GCSEN     GCSCR_EL1 / GCSCRE0_EL1 — guarded control stack
+ *   43 TCR2EN    TCR2_EL1
+ *   44 SCTLR2En  SCTLR2_EL2
+ *   45 PIEN      PIR_EL1 / PIRE0_EL1 — permission indirection
+ *
+ * The list was found by making the traps name themselves: QEMU logs the register and the controls
+ * when an access is routed to EL3 from EL1 with no visible cause. QEMU masks a bit whose feature the
+ * CPU lacks, so the set is safe on a model that implements less. They belong in the value itself
+ * because the monitor rewrites SCR_EL3 on the first SMC. */
+#define SCR ((1UL << 10) | (1UL << 11) | (1UL << 8) | (1UL << 18) | (1UL << 25) | (1UL << 27) | \
+             (1UL << 38) | (1UL << 39) | (1UL << 43) | (1UL << 44) | (1UL << 45))
 #define SUCCESS 0x84000061UL
 #define ERROR 0x84000060UL
 #define DIRECT_REQ 0xc400006fUL
@@ -83,10 +102,22 @@ struct context {
     u64 CNTKCTL_EL1;
     u64 CNTHCTL_EL2;
     u64 CONTEXTIDR_EL1;
+    u64 TCR2_EL1, TCR2_EL2;
+    u64 PIR_EL1, PIRE0_EL1, PIR_EL2, PIRE0_EL2;
+    u64 HCRX_EL2;
     u64 fp[66] __attribute__((aligned(16)));
 };
 static struct context secure_context, nonsecure_context;
 static int ns_started, ns_pending;
+static int has_tcr2, has_s1pie, has_hcrx;
+/* Which direct request is waiting for the secure world, so its answer can be logged as a pair
+ * with the question it answers. Only meaningful under MONITOR_TRACE. */
+static u64 pending_direct;
+
+/* The parked secondary's mailbox, filled by CPU_ON. Defined in start.S's .data so a core that has not
+ * yet run the primary's BSS clear still sees it. */
+extern volatile u64 secondary_release, secondary_entry, secondary_context;
+static u64 secondary_started;
 static u64 ns_rx, ns_tx, sp_rx, sp_tx;
 static u64 *sp_hvc_frame;
 static u64 shared_address, shared_size;
@@ -104,6 +135,52 @@ static int guest_buffer(u64 address, u64 size) {
 extern void enter(u64 ignored, u64 arg0);
 extern void save_fp(u64 *p);
 extern void restore_fp(u64 *p);
+#ifdef MONITOR_TRACE
+static void trace_context(const char *operation, const struct context *c) {
+    console_puts("\nCTX ");
+    console_puts(operation);
+    console_puts(c == &secure_context ? " secure" : " nonsecure");
+    console_puts(" scr=");
+    hex(READ(SCR_EL3));
+    console_puts(" pc=");
+    hex(c->pc);
+    console_puts(" pstate=");
+    hex(c->pstate);
+    console_puts(" vbar1=");
+    hex(c->VBAR_EL1);
+    console_puts(" live_vbar1=");
+    hex(READ(VBAR_EL1));
+    console_puts(" vbar2=");
+    hex(c->VBAR_EL2);
+    console_puts(" sctlr1=");
+    hex(c->SCTLR_EL1);
+    console_puts(" tcr1=");
+    hex(c->TCR_EL1);
+    console_puts(" ttbr0=");
+    hex(c->TTBR0_EL1);
+    console_puts(" hcr2=");
+    hex(c->HCR_EL2);
+    console_puts(" tcr2_el1=");
+    hex(c->TCR2_EL1);
+    console_puts(" live_tcr2_el1=");
+    hex(has_tcr2 ? READ(S3_0_C2_C0_3) : 0);
+    console_puts(" tcr2_el2=");
+    hex(c->TCR2_EL2);
+    console_puts(" live_tcr2_el2=");
+    hex(has_tcr2 ? READ(S3_4_C2_C0_3) : 0);
+    console_puts(" pir1=");
+    hex(c->PIR_EL1);
+    console_puts(" pire0_1=");
+    hex(c->PIRE0_EL1);
+    console_puts(" pir2=");
+    hex(c->PIR_EL2);
+    console_puts(" pire0_2=");
+    hex(c->PIRE0_EL2);
+    console_puts(" hcrx=");
+    hex(c->HCRX_EL2);
+    console_puts("\n");
+}
+#endif
 static void save(struct context *c, u64 *r) {
     save_fp(c->fp);
     copy(c->r, r, 31);
@@ -138,6 +215,23 @@ static void save(struct context *c, u64 *r) {
     c->CNTKCTL_EL1 = READ(CNTKCTL_EL1);
     c->CNTHCTL_EL2 = READ(CNTHCTL_EL2);
     c->CONTEXTIDR_EL1 = READ(CONTEXTIDR_EL1);
+    /* This QEMU model keeps one copy per EL, not per security state. Linux enables PIE;
+     * applying its permission indices to STMM's legacy descriptors denies execution on return. */
+    if (has_tcr2) {
+        c->TCR2_EL1 = READ(S3_0_C2_C0_3);
+        c->TCR2_EL2 = READ(S3_4_C2_C0_3);
+    }
+    if (has_s1pie) {
+        c->PIR_EL1 = READ(S3_0_C10_C2_3);
+        c->PIRE0_EL1 = READ(S3_0_C10_C2_2);
+        c->PIR_EL2 = READ(S3_4_C10_C2_3);
+        c->PIRE0_EL2 = READ(S3_4_C10_C2_2);
+    }
+    if (has_hcrx)
+        c->HCRX_EL2 = READ(S3_4_C1_C2_2);
+#ifdef MONITOR_TRACE
+    trace_context("save", c);
+#endif
 }
 static void restore(struct context *c, u64 *r) {
     WRITE(SCTLR_EL2, READ(SCTLR_EL2) & ~1UL);
@@ -150,6 +244,20 @@ static void restore(struct context *c, u64 *r) {
     WRITE(SPSR_EL1, c->SPSR_EL1);
     WRITE(ELR_EL2, c->ELR_EL2);
     WRITE(SPSR_EL2, c->SPSR_EL2);
+    /* Restore the permission interpretation and its tables while both MMUs are off. Do not
+     * mask the feature in SCR_EL3: the normal world's saved PIE configuration must survive. */
+    if (has_tcr2) {
+        WRITE(S3_0_C2_C0_3, c->TCR2_EL1);
+        WRITE(S3_4_C2_C0_3, c->TCR2_EL2);
+    }
+    if (has_s1pie) {
+        WRITE(S3_0_C10_C2_3, c->PIR_EL1);
+        WRITE(S3_0_C10_C2_2, c->PIRE0_EL1);
+        WRITE(S3_4_C10_C2_3, c->PIR_EL2);
+        WRITE(S3_4_C10_C2_2, c->PIRE0_EL2);
+    }
+    if (has_hcrx)
+        WRITE(S3_4_C1_C2_2, c->HCRX_EL2);
     WRITE(TTBR0_EL1, c->TTBR0_EL1);
     WRITE(TTBR1_EL1, c->TTBR1_EL1);
     WRITE(TCR_EL1, c->TCR_EL1);
@@ -178,6 +286,9 @@ static void restore(struct context *c, u64 *r) {
     copy(r, c->r, 31);
     WRITE(ELR_EL3, c->pc);
     WRITE(SPSR_EL3, c->pstate);
+#ifdef MONITOR_TRACE
+    trace_context("restore", c);
+#endif
 }
 static void yield(u64 *r, int response) {
     sp_hvc_frame = r;
@@ -228,6 +339,10 @@ void boot(void) {
     console_puts("\nMON: boot STMM\n");
     *(volatile u32 *)0x06880014 = 0;
     WRITE(SCR_EL3, SCR);
+    u64 mmfr3 = READ(S3_0_C0_C7_3);  /* ID_AA64MMFR3_EL1 */
+    has_tcr2 = (mmfr3 & 15) != 0;
+    has_s1pie = ((mmfr3 >> 8) & 15) != 0;
+    has_hcrx = ((READ(ID_AA64MMFR1_EL1) >> 40) & 15) != 0;
     WRITE(HCR_EL2, 1UL << 31);
     WRITE(CPTR_EL2, 0);
     WRITE(VBAR_EL2, READ(VBAR_EL3));
@@ -238,6 +353,86 @@ void boot(void) {
     WRITE(SPSR_EL3, 0x3c5);
     enter(0, 0x680000);
 }
+/* Registers the secure world answers but does not implement. Keyed by the instruction with its
+ * read/write bit and its target register removed, so a write and a later read of the same register
+ * find each other. */
+typedef struct {
+    u32 key;
+    u64 value;
+    u32 accesses;
+} sysreg_entry;
+#define SYSREG_ENTRIES 16
+static sysreg_entry sysregs[SYSREG_ENTRIES];
+
+/* The register is named by the syndrome, not by the instruction the guest was executing: reading
+ * that instruction from EL3 means dereferencing a guest virtual address with translation off, and
+ * the abort that caused (FAR at a kernel address, EL3 faulting) is exactly what this avoids. */
+static void sysreg_access(u64 *r, u64 esr) {
+    u32 iss = (u32)(esr & 0x1ffffffu);
+    unsigned op0 = (iss >> 20) & 0x3;
+    unsigned op2 = (iss >> 17) & 0x7;
+    unsigned op1 = (iss >> 14) & 0x7;
+    unsigned crn = (iss >> 10) & 0xf;
+    unsigned rt = (iss >> 5) & 0x1f;
+    unsigned crm = (iss >> 1) & 0xf;
+    int read = (iss >> 0) & 1;
+    u32 key = ((u32)op0 << 16) | ((u32)op1 << 12) | ((u32)crn << 8) | ((u32)crm << 4) | op2;
+    unsigned target = rt;
+    for (int i = 0; i < SYSREG_ENTRIES; i++) {
+        if (sysregs[i].key == key || sysregs[i].key == 0) {
+            if (sysregs[i].key == 0) {
+                sysregs[i].key = key;
+                sysregs[i].value = 0;
+            }
+            if (read) {
+                r[target] = sysregs[i].value;
+            } else {
+                sysregs[i].value = r[target];
+            }
+            if (sysregs[i].accesses++ == 0) {
+                console_puts("\nMON: sysreg answered S");
+                hex(op0);
+                console_puts("_");
+                hex(op1);
+                console_puts("_C");
+                hex(crn);
+                console_puts("_C");
+                hex(crm);
+                console_puts("_");
+                hex(op2);
+                console_puts(read ? " read" : " write");
+                if (!read) {
+                    console_puts(" value=");
+                    hex(r[target]);
+                }
+                console_puts(" hcr=");
+                hex(READ(HCR_EL2));
+                console_puts(" scr=");
+                hex(READ(SCR_EL3));
+                console_puts(" cptr3=");
+                hex(READ(CPTR_EL3));
+                console_puts(" vbar2=");
+                hex(READ(VBAR_EL2));
+                console_puts(" vbar3=");
+                hex(READ(VBAR_EL3));
+                console_puts(" esr2=");
+                hex(READ(ESR_EL2));
+                console_puts(" esr=");
+                hex(READ(ESR_EL3));
+                console_puts(" spsr=");
+                hex(READ(SPSR_EL3));
+                console_puts(" cur=");
+                hex(READ(CurrentEL));
+                console_puts("\n");
+            }
+            return;
+        }
+    }
+    console_puts("\nMON: sysreg table full esr=");
+    hex(esr);
+    console_puts("\n");
+}
+
 static void logcall(u64 *r, u64 level, u64 esr) {
     console_puts("\nMON: EL");
     hex(level);
@@ -249,6 +444,22 @@ static void logcall(u64 *r, u64 level, u64 esr) {
         console_puts(" ");
         hex(r[i]);
     }
+    /* The instruction that trapped, so a system-register access can be named rather than guessed,
+     * and the trap controls that would explain a system-register trap at all. */
+    console_puts(" elr=");
+    hex(level == 3 ? READ(ELR_EL3) : READ(ELR_EL2));
+    console_puts(" scr=");
+    hex(READ(SCR_EL3));
+    console_puts(" cptr3=");
+    hex(READ(CPTR_EL3));
+    console_puts(" hcr=");
+    hex(READ(HCR_EL2));
+    console_puts(" cptr2=");
+    hex(READ(CPTR_EL2));
+    console_puts(" sctlr1=");
+    hex(READ(SCTLR_EL1));
+    console_puts(" spsr3=");
+    hex(READ(SPSR_EL3));
     console_puts("\n");
 }
 /* The RTC the firmware reads starts at the base the harness pins, so two runs that were told to
@@ -347,6 +558,24 @@ static int rtc_service(u64 *r) {
     r[4] = data;
     return 1;
 }
+/* PSCI. Two answers have to be truthful before a caller will believe anything else: how many CPUs
+ * this model has, and which of them are running. SPARK_CPU_COUNT comes from the profile's -smp, so a
+ * one-CPU build reports one CPU rather than guessing.
+ *
+ * CPU_ON publishes the parked secondary's entry and context and releases it once.
+ * CPU_OFF returns DENIED: a retired core cannot be restarted by this one-shot model.
+ * PSCI_FEATURES advertises only the queries this monitor reports as supported.
+ */
+#ifndef SPARK_CPU_COUNT
+#define SPARK_CPU_COUNT 1
+#endif
+#define PSCI_AFFINITY_ON   0
+#define PSCI_AFFINITY_OFF  1
+#define PSCI_INVALID_PARAMETERS 0xfffffffeUL
+#define PSCI_NOT_SUPPORTED 0xffffffffUL
+#define PSCI_DENIED        0xfffffffdUL
+#define PSCI_ALREADY_ON    0xfffffffbUL
+
 /* SMCCC TRNG 1.0 backed by QEMU RNDR and its host CSPRNG. */
 static int trng_supported(u32 fid) {
     return fid == 0x84000050 || fid == 0x84000051 || fid == 0x84000052 ||
@@ -398,6 +627,75 @@ static void trng(u64 *r, u32 fid) {
     }
 }
 
+#ifdef SPARK_FFA_EC
+/* Linux's FF-A 1.2 discovery path. Keep the firmware's UUID-filtered STMM
+ * query on the existing path; publish only services actually implemented here. */
+static int ec_discovery(u64 *r)
+{
+    if (r[0] == 0x84000064) {
+        u32 feature = r[1];
+        switch (feature) {
+        case 0x84000063: case 0x84000064: case 0x84000065:
+        case 0xc4000066: case 0x84000067: case 0x84000068:
+        case 0x84000069: case DIRECT_REQ: case DIRECT_RESP:
+        case 0xc400008d: case 0xc400008e:
+            if (r[2] || r[3] || r[4] || r[5] || r[6] || r[7])
+                ffa_error(r, FFA_INVALID_PARAMETERS);
+            else {
+                success(r);
+                if (feature == 0xc4000066)
+                    r[2] = 1UL << 16; /* 4 KiB minimum and maximum. */
+            }
+            return 1;
+        default:
+            return 0; /* Existing memory features, or explicit NOT_SUPPORTED. */
+        }
+    }
+    if (r[0] != 0x84000068)
+        return 0;
+    int all = !(r[1] || r[2] || r[3] || r[4]);
+    int packet = r[1] == 0x804db078 && r[2] == 0x86491dd2 &&
+                 r[3] == 0x7b46cb8a && r[4] == 0xc57a2460;
+    if (!all && !packet)
+        return 0;
+    unsigned count = all ? 2 : 1;
+    if ((r[5] & ~1UL) || r[6] || r[7]) {
+        ffa_error(r, FFA_INVALID_PARAMETERS);
+        return 1;
+    }
+    if (!(r[5] & 1)) {
+        if (!ns_rx) {
+            ffa_error(r, FFA_DENIED);
+            return 1;
+        }
+        if (ns_rx_full) {
+            ffa_error(r, FFA_BUSY);
+            return 1;
+        }
+        u32 *data = (u32 *)ns_rx;
+        const u32 descriptors[] = {
+            0x00018003, 0x0109, 0x804db078, 0x86491dd2, 0x7b46cb8a, 0xc57a2460,
+            0x00018004, 0x0603, 0x9b12fb8a, 0x6047ca64, 0x88c81886, 0x4a6caa4c,
+        };
+        for (unsigned i = 0; i < count * 6; i++)
+            data[i] = descriptors[i];
+        ns_rx_full = 1;
+        __asm__ volatile("dsb sy" ::: "memory");
+    }
+#ifdef MONITOR_TRACE
+    console_puts("\nFFA-EC partition count=");
+    hex(count);
+    console_puts(" count-only=");
+    hex(r[5] & 1);
+    console_puts(" packet=0x8003 properties=0x0109 UUID=78b04d80-d21d-4986-8acb-467b60247ac5\n");
+#endif
+    success(r);
+    r[2] = count;
+    r[3] = 24;
+    return 1;
+}
+#endif
+
 void handle(u64 *r, u64 level) {
     u64 esr = level == 3 ? READ(ESR_EL3) : READ(ESR_EL2);
     u32 fid = r[0];
@@ -425,6 +723,20 @@ void handle(u64 *r, u64 level) {
         r[0] = 0;
         return;
     }
+    if (esr >> 26 == 0x18) {
+        /* A system-register access this secure world answers rather than implements: the value a
+         * read returns is what the non-secure world last wrote, and zero before that. That is what
+         * an unimplemented optional feature looks like from the caller's side, it keeps the boot
+         * moving, and every access is named once in the log so the list of registers a faithful
+         * model would need is written down rather than guessed. */
+        u64 elr = level == 3 ? READ(ELR_EL3) : READ(ELR_EL2);
+        sysreg_access(r, esr);
+        if (level == 3)
+            WRITE(ELR_EL3, elr + 4);
+        else
+            WRITE(ELR_EL2, elr + 4);
+        return;
+    }
     if (esr >> 26 != 0x17 && esr >> 26 != 0x16) {
         logcall(r, level, esr);
         console_puts("MON: abort FAR=");
@@ -450,8 +762,44 @@ void handle(u64 *r, u64 level) {
         } else if (ns_pending) {
             copy(nonsecure_context.r, sp_hvc_frame, 8);
             WRITE(SCR_EL3, SCR | 1);
+#ifdef MONITOR_TRACE
+            /* What is about to be returned to: the resume address is the one value a stall after
+             * the handover depends on, and the guest's own PC cannot be read once it is lost. */
+            console_puts("\nRELAY-OUT pc=");
+            hex(nonsecure_context.pc);
+            console_puts(" w=");
+            for (int i = 0; i < 8; i++) {
+                hex(nonsecure_context.r[i]);
+                console_puts(",");
+            }
+            /* Print the MM header/prefix to inspect framing, not a service verdict:
+             * this 32-byte capture does not reach the variable-service ReturnStatus. */
+            if (nonsecure_context.r[5] && guest_buffer(nonsecure_context.r[5], 32)) {
+                const unsigned char *b = (const unsigned char *)nonsecure_context.r[5];
+                console_puts(" buf=");
+                for (int i = 0; i < 32; i++) {
+                    hex(b[i]);
+                    console_puts(" ");
+                }
+            }
+#endif
             restore(&nonsecure_context, r);
             ns_pending = 0;
+#ifdef MONITOR_TRACE
+            if (pending_direct) {
+                console_puts("\nDIRECT_RESP fid=");
+                hex(pending_direct);
+                console_puts(" a0=");
+                hex(r[0]);
+                console_puts(" a1=");
+                hex(r[1]);
+                console_puts(" a2=");
+                hex(r[2]);
+                console_puts(" a3=");
+                hex(r[3]);
+                pending_direct = 0;
+            }
+#endif
         } else {
             console_puts("MON: bad secure yield\n");
             for (;;) {
@@ -459,7 +807,44 @@ void handle(u64 *r, u64 level) {
         }
         return;
     }
+#ifdef SPARK_FFA_EC
+    if (ns && ec_discovery(r))
+        return;
+    if (ns && (fid == DIRECT_REQ || fid == 0xc400008d)) {
+#ifdef MONITOR_TRACE
+        u64 request = r[fid == DIRECT_REQ ? 3 : 4];
+#endif
+        if (fan_packet_request(r)) {
+#ifdef MONITOR_TRACE
+            console_puts("\nEC-PACKET request=");
+            hex(request);
+            console_puts(" lower-floor=");
+            hex(fan_lower_floor());
+            console_puts(fan_lower_floor() == 0xffff ?
+                         " duty-source=unset-model-baseline" : " duty-source=inverse-estimate");
+            console_puts(" model-duty-percent=");
+            hex(fan_duty(0));
+            console_puts("/");
+            hex(fan_duty_denominator(0));
+            console_puts(",");
+            hex(fan_duty(1));
+            console_puts("/");
+            hex(fan_duty_denominator(1));
+            console_puts(" model-rpm-estimate=");
+            hex(fan_packet_rpm(0));
+            console_puts(",");
+            hex(fan_packet_rpm(1));
+            console_puts("\n");
+#endif
+            return;
+        }
+    }
+#endif
     if (fid == 0xc400008d && ns && (r[1] & 0xffff) == 0x8003 && rtc_service(r))
+        return;
+    if (fid == 0xc400008d && ns && fan_request(r))
+        return;
+    if (spbm_request(r))
         return;
     if (trng_supported(fid)) { trng(r, fid); return; }
     if (fid == 0x84000063) {
@@ -475,7 +860,16 @@ void handle(u64 *r, u64 level) {
         return;
     }
     if (fid == 0x8400000a) {
-        r[0] = -1UL;
+        /* Bit 0: a 32-bit variant is answered. Bit 1: a 64-bit variant is answered. Only the calls
+         * this monitor really answers are advertised. */
+        u32 feature = (u32)r[1];
+        /* Linux asks PSCI whether SMCCC_VERSION exists before enabling its
+         * SMCCC 1.2 register transport. Without this, arm_ffa never probes. */
+        if (feature == 0x80000000) {
+            r[0] = 0;
+            return;
+        }
+        r[0] = (feature == 0x84000004 || feature == 0xc4000004) ? 3 : -1UL;
         return;
     }
     if (fid == 0x84000069) {
@@ -614,6 +1008,34 @@ void handle(u64 *r, u64 level) {
         success(r);
         return;
     }
+#ifdef MONITOR_TRACE
+    /* Record the direct-message protocol before dispatch. Runtime requests for 0x8004
+     * are relayed to real STMM below, never answered with flash-service semantics.
+     * shared_address here describes a flash share, not the MM communication buffer. */
+    if (fid == DIRECT_REQ) {
+        console_puts("\nDIRECT_REQ a1=");
+        hex(r[1]);
+        console_puts(" a2=");
+        hex(r[2]);
+        console_puts(" a3=");
+        hex(r[3]);
+        console_puts(" a4=");
+        hex(r[4]);
+        /* shared_address is only ever set after guest_buffer() accepted it as RAM, so reading it
+         * here with translation off cannot fault — the same validation the flash service relies on. */
+        if (shared_address && shared_size) {
+            console_puts(" buf=");
+            unsigned char *b = (unsigned char *)shared_address;
+            unsigned long window = shared_size < 48 ? (unsigned long)shared_size : 48UL;
+            for (unsigned long i = 0; i < window; i++) {
+                hex(b[i]);
+                console_puts(" ");
+            }
+            console_puts("size=");
+            hex(shared_size);
+        }
+    }
+#endif
     if (fid == DIRECT_REQ && (r[1] & 0xffff) == 0x8002) {
         unsigned char *b = (unsigned char *)shared_address;
         if (r[1] != 0x80048002 || !shared_address || r[3] != 1 || r[4] != shared_size) {
@@ -632,6 +1054,10 @@ void handle(u64 *r, u64 level) {
         r[1] = ((endpoints & 0xffff) << 16) | ((endpoints >> 16) & 0xffff);
         return;
     }
+    /* Default / firmware UUID-filtered PARTITION_INFO_GET path: STMM only.
+     * SPARK_FFA_EC handles Linux's null/packet UUID queries above. The firmware's
+     * existing UUID word order is retained here; the Linux descriptors use its
+     * canonical UUID byte encoding. Do not advertise unimplemented partitions. */
     if (fid == 0x84000068) {
         u64 rx = ns ? ns_rx : sp_rx;
         if ((r[1] || r[2] || r[3] || r[4]) && (r[1] != 0x8afb129b || r[2] != 0x64ca4760 ||
@@ -670,6 +1096,9 @@ void handle(u64 *r, u64 level) {
     if (fid == 0x84000067) {
         if (ns) {
             ns_rx = ns_tx = 0;
+#ifdef SPARK_FFA_EC
+            ns_rx_full = 0;
+#endif
         } else {
             sp_rx = sp_tx = 0;
         }
@@ -687,11 +1116,35 @@ void handle(u64 *r, u64 level) {
     }
     if (fid == DIRECT_REQ && ns && (r[1] & 0xffff) == 0x8004) {
         if (ns_pending || !sp_hvc_frame || r[1] >> 16) {
+#ifdef MONITOR_TRACE
+            console_puts("\nRELAY-REFUSED pending=");
+            hex(ns_pending);
+            console_puts(" frame=");
+            hex((u64)(unsigned long)sp_hvc_frame);
+            console_puts(" ep=");
+            hex(r[1]);
+            console_puts(" elr3=");
+            hex(READ(ELR_EL3));
+#endif
             unsupported(r);
             return;
         }
+#ifdef MONITOR_TRACE
+        console_puts("\nRELAY-IN ep=");
+        hex(r[1]);
+        console_puts(" elr3=");
+        hex(READ(ELR_EL3));
+        console_puts(" spsr3=");
+        hex(READ(SPSR_EL3));
+        console_puts(" w=");
+        for (int i = 0; i < 8; i++) {
+            hex(r[i]);
+            console_puts(",");
+        }
+#endif
         save(&nonsecure_context, r);
         ns_pending = 1;
+        pending_direct = r[1];
         copy(sp_hvc_frame, r, 8);
         WRITE(SCR_EL3, SCR);
         restore(&secure_context, r);
@@ -708,6 +1161,46 @@ void handle(u64 *r, u64 level) {
         return;
     }
 #endif
+    if (fid == 0xc4000004 || fid == 0x84000004) {
+        /* AFFINITY_INFO: level 0 asks about one CPU, level 1 about the cluster. */
+        u64 target = r[1], level = r[2];
+        if (level > 1 || (level == 1 && (target >> 8)))
+            r[0] = PSCI_INVALID_PARAMETERS;
+        else if (level == 1)
+            r[0] = PSCI_AFFINITY_ON;
+        else if ((target & ~0xffUL) || (target & 0xff) >= SPARK_CPU_COUNT)
+            r[0] = PSCI_INVALID_PARAMETERS;
+        else if ((READ(MPIDR_EL1) & 0xff) == (target & 0xff))
+            r[0] = PSCI_AFFINITY_ON;
+        else
+            r[0] = secondary_started ? PSCI_AFFINITY_ON : PSCI_AFFINITY_OFF;
+        return;
+    }
+    if (fid == 0xc4000003 || fid == 0x84000003) {   /* CPU_ON */
+        u64 target = r[1], entry = r[2], context = r[3];
+        if (SPARK_CPU_COUNT < 2 || (target & ~0xffUL) || (target & 0xff) != 1 || !entry) {
+            r[0] = PSCI_INVALID_PARAMETERS;
+            return;
+        }
+        if (secondary_started) {
+            r[0] = PSCI_ALREADY_ON;
+            return;
+        }
+        /* Publish the work, then tell the parked core to look: it spins on `secondary_release`
+         * between WFE instructions, so one event is enough. */
+        secondary_context = context;
+        secondary_entry = entry;
+        secondary_release = 1;
+        secondary_started = 1;
+        __asm__ volatile("dsb sy\n sev" ::: "memory");
+        r[0] = 0;
+        return;
+    }
+    if (fid == 0xc4000002 || fid == 0x84000002) {   /* CPU_OFF */
+        /* A core that asks to be retired cannot be restarted: the model keeps one-shot CPUs. */
+        r[0] = PSCI_DENIED;
+        return;
+    }
     if ((fid & 0xffff) >= 0x60 && (fid & 0xffff) <= 0x8f)
         unsupported(r);
     else

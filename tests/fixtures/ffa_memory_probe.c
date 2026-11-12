@@ -104,6 +104,41 @@ void memory_probe(void) {
     u64 *tx = (u64 *)0x88000000;
     simple(0xc4000066, 0x93a40000, 0x88001000, 1, ERROR, -6);
     simple(0xc4000066, (u64)tx, 0x88001000, 1, OK, 0);
+#ifdef SPARK_FFA_EC
+    simple(0x8400000a, 0x80000000, 0, 0, 0, 0); /* SMCCC discovery prerequisite */
+    u64 version[8] = {0x84000063, 0x10002};
+    invoke(version); REQUIRE(version[0] == 0x10002);
+    u64 identity[8] = {0x84000069};
+    invoke(identity); REQUIRE(identity[0] == OK && identity[2] == 0);
+    const u64 features[] = {0xc4000066, 0x84000065, 0x84000067, 0x84000068,
+                            0xc400008d, 0xc400008e};
+    for (unsigned i = 0; i < sizeof(features) / sizeof(features[0]); i++)
+        simple(0x84000064, features[i], 0, 0, OK, 0);
+    simple(0x84000064, 0xc400008d, 1, 0, ERROR, -2);
+    simple(0x84000064, 0xc400008b, 0, 0, ERROR, -1); /* no register discovery */
+    u64 info[8] = {0x84000068, 0, 0, 0, 0, 1};
+    invoke(info); REQUIRE(info[0] == OK && info[2] == 2 && info[3] == 24);
+    /* A count-only query must not transfer RX ownership. */
+    zero(info, 8); info[0] = 0x84000068;
+    invoke(info); REQUIRE(info[0] == OK && info[2] == 2);
+    unsigned *rx = (unsigned *)0x88001000;
+    REQUIRE(rx[0] == 0x00018003 && rx[1] == 0x0109 &&
+            rx[2] == 0x804db078 && rx[3] == 0x86491dd2 &&
+            rx[4] == 0x7b46cb8a && rx[5] == 0xc57a2460 && rx[6] == 0x00018004);
+    simple(0x84000068, 0, 0, 0, ERROR, -4);
+    simple(0x84000065, 0, 0, 0, OK, 0);
+    zero(info, 8); info[0] = 0x84000068;
+    info[1] = 0x804db078; info[2] = 0x86491dd2;
+    info[3] = 0x7b46cb8a; info[4] = 0xc57a2460;
+    invoke(info); REQUIRE(info[0] == OK && info[2] == 1);
+    simple(0x84000065, 0, 0, 0, OK, 0);
+    u64 packet[8] = {0xc400008d, 0x8003, 0x86491dd2804db078UL,
+                     0xc57a24607b46cb8aUL, 0x0a000101};
+    invoke(packet); REQUIRE(packet[0] == 0xc400008e && packet[1] == 0x80030000 && !packet[4]);
+    zero(packet, 8); packet[0] = 0xc400008d; packet[1] = 0x8003;
+    packet[2] = 0x86491dd2804db078UL; packet[3] = 0xc57a24607b46cb8aUL; packet[4] = 2;
+    invoke(packet); REQUIRE(packet[0] == 0xc400008e && (packet[4] & 0xffffff) == 0x100);
+#endif
     simple(0x84000064, 0xc4000073, 0, 0, OK, 0);
     simple(0x84000064, 0xc4000073, 2, 0, ERROR, -2);
     simple(0x84000064, 0x84000072, 0, 0, ERROR, -1);

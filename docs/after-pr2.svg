@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="456" viewBox="0 0 1040 456" role="img" aria-labelledby="title desc">
+  <title id="title">What the profile exposes, after PR 1 and after PR 2</title>
+  <desc id="desc">After the first pull request the machine exposed a NIC and a watchdog whose GTDT described the generic frames, with one CPU and no storage. After this second pull request the watchdog sits at the board's frames with the corrected interrupt, NVMe namespaces can be attached one per function and carry their own snapshots, the guest OS is given the same endpoints through the configuration window its own ACPI names, two CPUs are modelled with the second parked, the harness records which layout and program model produced a run, and a trace plugin lives in the repository.</desc>
+
+  <style>
+    .frame { fill: #ffffff; stroke: #c8cdd4; stroke-width: 1.5; }
+    .panel { fill: #f7f8fa; stroke: #c8cdd4; stroke-width: 1.5; }
+    .title { font: bold 20px ui-sans-serif, system-ui, sans-serif; fill: #1f2328; }
+    .sub { font: 13px ui-sans-serif, system-ui, sans-serif; fill: #57606a; }
+    .head { font: bold 14px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #1f2328; }
+    .label { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #1f2328; }
+    .small { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #57606a; }
+    .nic { fill: #dbeafe; stroke: #3b82f6; stroke-width: 1.5; }
+    .storage { fill: #dcfce7; stroke: #16a34a; stroke-width: 1.5; }
+    .timer { fill: #fde68a; stroke: #b45309; stroke-width: 1.5; }
+    .cpu { fill: #e9d5ff; stroke: #7c3aed; stroke-width: 1.5; }
+    .bad { fill: #fee2e2; stroke: #dc2626; stroke-width: 1.5; }
+    .tool { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.2; }
+  </style>
+
+  <rect class="frame" x="1" y="1" width="1038" height="454" rx="10"/>
+  <text class="title" x="24" y="34">The machine, after the first pull request and after this one</text>
+  <text class="sub" x="24" y="56">Same profile in both panels. The left is what merged; the right is what this branch adds.</text>
+
+  <!-- AFTER PR 1 -->
+  <rect class="panel" x="24" y="76" width="488" height="326" rx="8"/>
+  <text class="head" x="40" y="102">After #1 (merged)</text>
+
+  <rect class="nic" x="44" y="120" width="200" height="44" rx="5"/>
+  <text class="label" x="54" y="139">NIC</text>
+  <text class="small" x="54" y="155">bus 1 slot 0</text>
+
+  <rect class="timer" x="44" y="176" width="200" height="44" rx="5"/>
+  <text class="label" x="54" y="195">GWDT mapped</text>
+  <text class="small" x="54" y="211">GTDT says other frames</text>
+
+  <rect class="cpu" x="44" y="232" width="200" height="44" rx="5"/>
+  <text class="label" x="54" y="251">one CPU</text>
+  <text class="small" x="54" y="267">more is refused</text>
+
+  <rect class="bad" x="44" y="288" width="440" height="44" rx="5"/>
+  <text class="label" x="56" y="307">no storage, no tracing in the repository</text>
+
+  <text class="small" x="44" y="360">at merge: 127 tests · 18 test files · flash model from #1</text>
+  <text class="small" x="44" y="378">synthetic builders in three test files · page-only model · 4 GiB cap</text>
+
+  <!-- AFTER PR 2 -->
+  <rect class="panel" x="528" y="76" width="488" height="326" rx="8"/>
+  <text class="head" x="544" y="102">After #2 (this branch)</text>
+
+  <rect class="nic" x="548" y="120" width="200" height="44" rx="5"/>
+  <text class="label" x="558" y="139">NIC</text>
+  <text class="small" x="558" y="155">bus 1 slot 0, untouched</text>
+
+  <rect class="storage" x="548" y="176" width="200" height="44" rx="5"/>
+  <text class="label" x="558" y="195">NVMe, one per namespace</text>
+  <text class="small" x="558" y="211">slot 2, 3, … own snapshot</text>
+
+  <rect class="timer" x="548" y="232" width="200" height="44" rx="5"/>
+  <text class="label" x="558" y="251">GWDT at the board frames</text>
+  <text class="small" x="558" y="267">0x1c041000, WS0 GSI fixed</text>
+
+  <rect class="cpu" x="548" y="288" width="200" height="44" rx="5"/>
+  <text class="label" x="558" y="307">two CPUs</text>
+  <text class="small" x="558" y="323">second parked, and said so</text>
+
+  <rect class="tool" x="548" y="340" width="200" height="44" rx="5"/>
+  <text class="label" x="558" y="359">the OS's own window</text>
+  <text class="small" x="558" y="375">segment 15, 0x29000000</text>
+
+  <rect class="tool" x="762" y="176" width="240" height="208" rx="6"/>
+  <text class="label" x="774" y="198">Harness</text>
+  <text class="small" x="774" y="218">layout from the input</text>
+  <text class="small" x="774" y="236">two program models, named</text>
+  <text class="small" x="774" y="254">trace plugin in-tree</text>
+  <text class="small" x="774" y="272">store fixtures, no vendor bytes</text>
+  <text class="small" x="774" y="290">extended RAM, opt-in</text>
+  <text class="small" x="774" y="344">oracles that execute, never grep</text>
+  <text class="small" x="774" y="362">fan: both status ids read</text>
+
+  <text class="small" x="40" y="424">the same two CI jobs as #1, now covering all of this · every claim measured against the merged tip, not a memory of it</text>
+  <text class="small" x="40" y="442">393 tests in 74 files on this tip, 46 of them skipped without the vendor capsules · the profile cases run in the second CI job</text>
+</svg>

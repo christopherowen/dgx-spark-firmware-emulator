@@ -62,6 +62,28 @@ class BoardImage:
         return bytes(image)
 
 
+def erased_store(size: int = STORE_SIZE) -> bytes:
+    """An erased store half in the shape the firmware's own volume uses.
+
+    Measured on a readback: erased, with the volume length at `0x20` and `_FVH` at
+    `0x28`; everything else in the header is `0xff`. Building anything stricter would
+    produce an image the real part never carries.
+    """
+    if size != STORE_SIZE:
+        raise ImageError(f"a store half is {STORE_SIZE:#x} bytes, not {size:#x}")
+    store = bytearray(b"\xff" * size)
+    store[0x20:0x28] = (0x40000).to_bytes(8, "little")
+    store[FV_SIGNATURE_OFFSET:FV_SIGNATURE_OFFSET + 4] = FV_SIGNATURE
+    return bytes(store)
+
+
+def fresh_image(code: bytes, store: bytes | None = None) -> bytes:
+    """A device image that can boot from erased: erased store, the release's code volume."""
+    padded = code + b"\xff" * (CODE_SIZE - len(code))
+    return BoardImage(store=store if store is not None else erased_store(),
+                      code=padded).compose()
+
+
 def split(image: bytes) -> BoardImage:
     if len(image) != DEVICE_SIZE:
         raise ImageError(f"board image must be {DEVICE_SIZE:#x} bytes, not {len(image):#x}")
@@ -90,6 +112,8 @@ def main(argv=None) -> int:
     compose_cmd = sub.add_parser("compose", help="build the board image from its two halves")
     compose_cmd.add_argument("--store", type=Path, required=True)
     compose_cmd.add_argument("--code", type=Path, required=True)
+    compose_cmd.add_argument("--erased-store", action="store_true",
+                             help="build the store half erased, for a fresh device image")
     compose_cmd.add_argument("--out", type=Path, required=True)
     split_cmd = sub.add_parser("split", help="extract the two halves")
     split_cmd.add_argument("image", type=Path)
@@ -101,7 +125,8 @@ def main(argv=None) -> int:
 
     try:
         if args.command == "compose":
-            parts = BoardImage(store=args.store.read_bytes(), code=args.code.read_bytes())
+            store = erased_store() if args.erased_store else args.store.read_bytes()
+            parts = BoardImage(store=store, code=args.code.read_bytes())
             image = parts.compose()
             if args.out.exists():
                 raise ImageError(f"refusing to overwrite {args.out}")

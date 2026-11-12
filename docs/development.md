@@ -25,6 +25,28 @@ QEMU build, emulator integration tests are skipped:
 python3 -m unittest discover -s tests -v
 ```
 
+The fan allowlist and Boot Services guards also run on the host: the fan fixture
+replaces only the privileged SMC transport, while the device-path and filesystem
+fixtures call the real EFI entry points with synthetic tables, neighbouring-slot
+canaries, and valid/invalid signatures. These checks do not prove a firmware boot.
+The research-record documentation lints validate structured claim status, hashes,
+coordinate-system enums, access modes and table identifiers, not English wording
+or the truth of claims that require unavailable hardware.
+
+Run the targeted oracle-sensitivity gate to confirm every converted test rejects
+its source/data mutant (including writes enabled in `READ_ONLY` and bypassed
+Boot Services signature checks):
+
+```sh
+python3 tools/check_test_oracles.py --output build/oracle-mutations.json
+```
+
+The gate first requires each unmodified test to pass. Compile errors, crashes and
+skips do not count as killed mutants. Research prose remains human-reviewed;
+the provenance lint checks recorded non-erased payload bytes, not arbitrary
+sentences in documentation. Firmware-dependent tests still replay the records
+against their named artifacts when those artifacts are available.
+
 After building the [QEMU profile](../qemu/README.md), include its peripheral,
 NIC, monitor and TRNG integration tests:
 
@@ -118,8 +140,26 @@ With the trace build the run's `run.json` carries `flash_requests` and `smc_call
 answered flash requests and of SMCs that reached the monitor, so a measurement can be quoted
 without re-reading the log.
 
+The retained failed PXE run `20261110T142830.502484Z` has a
+`console_script` receipt for six attempted lines through the former QMP
+`send-key` path. Source tracing shows that `-nodefaults -display none
+-serial stdio` has no keyboard handler to receive those events; this is
+not a newly measured guest failure, and no execution of those six lines
+is established. The run is retained as a failed attempt, not input proof.
+It is the only retained `boot_spark.py` run with a `console_script` receipt;
+the installer-shell scripts used `run_linux.py`'s separate serial-stdin path.
+Other historical `mode: interactive` receipts do not identify the input
+mechanism and cannot establish it retrospectively.
+
+The broken helper was introduced after PR #2's tip `074b1aa`; it does not
+invalidate that era's setup/navigation evidence. Those paths already wrote
+ESC, right-arrow and interactive input through `process.stdin.write`.
+For example, `20261109T190146.460164Z` records `mode: setup_test` and
+`keyboard_navigation_verified` through that serial path, not the later QMP helper.
+
 `--accept-mmap-notify` answers the firmware's DRAM notification (`0xc4000122`) with success instead of
-`NOT_SUPPORTED`. It exists so the two answers can be compared boot for boot; with the default monitor a
+`NOT_SUPPORTED`. It changes only the return status, is off by default, and establishes no isolation.
+It exists so the two answers can be compared boot for boot; with the default monitor a
 boot lands on the same store image either way, so the choice does not affect measured behaviour.
 
 ## Counting reboot cycles instead of seconds
@@ -267,3 +307,77 @@ run metadata go into ignored `build/`. Use `--timeout 60` on a slower host.
 This command accepts generic QEMU firmware, not an NVIDIA update capsule.
 Missing TPM or entropy-device diagnostics can appear on this minimal machine;
 the pass condition is shell entry, not a clean platform initialization report.
+
+## Two CPUs, and what the second one does
+
+The profile models one or two CPUs. With `--smp 2` the monitor initially parks the
+secondary; `CPU_ON` publishes its entry and context and releases it, and `AFFINITY_INFO`
+reports its transition from off to on. The two-CPU synthetic fixture checks that path.
+The earlier firmware-entry trace (`trace_per_cpu: {"cpu0": 1}`) shows only that the
+secondary had not been started in that run, not that no release path exists.
+The vendor MADT and loader tag still describe one active processor.
+
+## Asking the firmware what settings exist
+
+`tests/fixtures/nvram_census.c` is an EFI application (PXE lane) that enumerates every UEFI
+variable — name, GUID, attributes, size, and the bytes for values up to 512 bytes — and walks the
+ACPI tables through the configuration table, printing each table's signature, length and address.
+Under the profile it returns the firmware's own answer: on 2.158.15, 69-74 variables including
+`Setup`, `SecureBoot`, `AMITCGPPIVAR` and `NvmeDynamicSetupVar`, and 17 tables including FACP,
+APIC, GTDT, PPTT and four SSDTs. `tests/test_census.py` asserts that shape rather than a snapshot,
+because the variable set follows the store the boot used.
+
+Two things it settles for configuration work: which settings are NVRAM-backed (a `Setup` blob of
+0x51 bytes is present and readable), and which interface an ACPI table would describe. Decoding the
+`Setup` fields needs the HII forms from the firmware image, and the SSDTs at the printed addresses
+are where an EC or fan interface would live.
+
+## Running a whole Linux image, not just firmware
+
+`tools/run_linux.py` boots a kernel and initramfs under this QEMU build and records the run the same
+way a firmware boot is recorded: machine, arguments, kernel and initramfs hashes, the QEMU binary's
+hash, the console log, and a verdict — `kernel`, `userspace`, or `not-booted`.
+
+With the vendor recovery archive it does the extraction itself (cached under
+`firmware/downloads/recovery-extract/`, never in the tree):
+
+```sh
+python3 tools/run_linux.py --recovery firmware/downloads/dgx-spark-recovery-1.155.49.tar.gz --timeout 90
+```
+
+That boots `7.0.0-1018-nvidia` and its installer initramfs to userspace: the console shows the
+installer's own banner (`--- FastOS Version`, `NAME="DGX Spark FASTOS"`, `VERSION="1.155.49"`) before
+it starts looking for its media. `tests/test_linux_boot.py` asserts exactly that, so the milestone is
+a regression test rather than a lucky run.
+
+What it does not do yet: run under the firmware profile (the handover path), find the installation
+media, or write to a target disk. Those are the next steps, and each one is a modelling question the
+harness will make visible rather than a guess.
+
+Booting the recovery kernel under the firmware profile works too, and slowly:
+`docs/linux-under-the-profile.md` records the four things it took (the SCR enables, the console on
+the command line, LPIs off, and the block the firmware declares). Under TCG the guest spends about
+two minutes of wall time on each second of kernel time, so `--timeout` accepts up to an hour for a
+boot that is expected to reach userspace.
+
+## What the emulator can prove about the levers, in one place
+
+| lever | proof in this tree | limit |
+| --- | --- | --- |
+| fans, contract | `monitor/fan.c` answers `0xC400008D`; `tests/test_fan_emulator.py` drives it through a firmware-delivered probe and both fans read back (`R0 4350`, `R1 4350`) | the EC is not modelled; the model is the contract |
+| fans, exact AML | `tests/test_fan_aml.py` executes the vendor's `_FSL`/`_FST` under ACPICA; `_FST` reports the level just set | the SMC itself is inert under ACPICA (no FFH handler) |
+| fans, through Linux | the profile boots the vendor kernel to userspace (`tests/test_profile_userspace.py`) | the *recovery* kernel inside QEMU has no FFH handler, which is what the earlier "REFUSED" recorded — that is a property of that guest, not of the firmware |
+| fans, newest firmware | `FAN-OK` on LVFS `0x2009e0f` and on the Dell 4.1.0 capsule (`research/firmware-catalog.json`) | the EC firmware is not emulated |
+| power limits | the monitor serves the OS/effective PL slots; the probe writes PL1=45000, reads the effective value, restores (`PL-OK`) | the slots are a model, not the arbitration behind them |
+| thermal zones | the seeded SOC_THERM block reads back through the firmware's ACPI thermal zones: 44.9 / 39.9 / 49.9 / 34.9 °C in the guest | a seed, not a sensor model |
+
+## Tools that inspect local vendor files
+
+These read a file the caller already holds and report what it contains; they do not run firmware or touch a unit.
+
+| Tool | Purpose |
+| --- | --- |
+| `tools/timing_tables.py` | Locate and extract the `BCT`/`DDRFSK`/`MISC` partitions of a local capsule |
+| `tools/container.py` | Parse the capsule's component table and extract a named component |
+| `tools/spkg.py` | Parse `SPKG` containers and the FF-A manifests inside them |
+| `tools/anchors.py` | Find code references to a string in a raw AArch64 image, by file offset |

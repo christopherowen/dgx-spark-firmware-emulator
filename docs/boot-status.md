@@ -43,7 +43,10 @@ capsule PKCS#7 trust chain or establish authenticated boot.
 | Subsequent cold boot | Existing NOR state loaded; setup, navigation and all protocols verified again |
 | Native IPv4 PXE | Bundled Realtek UNDI/SNP/DHCP/PXE drivers obtain a lease and download an EFI program over TFTP |
 | Downloaded EFI execution | Original probe prints a fresh per-run token; complete acknowledged transfer matches the probe bytes |
-| GPU, physical NIC firmware or operating system | Not part of this result |
+| Vendor Linux, under the same profile | The recovery kernel and installer initramfs reach userspace: `Run /init as init process`, the installer banner, `VERSION="1.155.49"` (`docs/linux-under-the-profile.md`, `tests/test_profile_userspace.py`) |
+| Installed Linux from the installer-produced NVMe image | Kernel `7.0.0-1019-nvidia`, 4 KiB pages; default `graphical.target` transaction reaches `multi-user.target` and serial login with no `systemd.unit=` override (2.158.15) |
+| Lab-key platform Secure Boot | Separately provisioned lab PK/KEK/db enable Secure Boot; unchanged shim verifies GRUB and the kernel, and the default transaction reaches serial login (2.155.11) |
+| GPU and physical NIC firmware | Not part of this result |
 
 The 13 protocols are Security, Cpu, Metronome, Timer, Bds, WatchdogTimer,
 Runtime, Variable, VariableWrite, Capsule, MonotonicCounter, Reset and
@@ -72,6 +75,13 @@ The record links each run's input/output NOR hashes, allowing persistence to
 be checked without publishing any generated variable-store contents. Failed
 runs preserve the previous NOR file. Concurrent runs cannot share one store.
 
+Older receipts record `mode: interactive` but not how host input reached the
+guest. That field alone cannot distinguish working serial-stdin input from
+QMP keyboard events, which do not reach this profile's UART. Current receipts
+record `console_input_transport: serial-stdin`; scheduled script attempts also
+record `console_script.transport`. These identify the host transport, not
+guest execution: the guest's command output is still required as evidence.
+
 ## PXE evidence
 
 The PXE test does not enter setup. Its optional RTL8168C compatibility NIC is
@@ -92,9 +102,10 @@ NOR store and a subsequent cold boot are supported.
 QEMU libslirp provides a restricted local test network. Its dedicated TFTP
 directory contains only the generated original probe; vendor images, state,
 objects and logs are never served. The PCAP remains in the ignored run folder.
-This establishes IPv4 PXE and EFI application execution. IPv6 PXE, HTTP boot,
-Secure Boot image acceptance, OS boot and the physical NIC's embedded firmware
-have not been verified.
+This establishes IPv4 PXE and EFI application execution. IPv6 PXE, HTTP boot
+and the physical NIC's embedded firmware have not been verified. Installed
+Linux boot and lab-key Secure Boot image acceptance are separate results below;
+the PXE result does not establish Secure-Boot-on network boot.
 
 ## Model boundaries
 
@@ -107,8 +118,10 @@ The [NS memory-sharing extension](mm-sharing.md) adds a bounded FF-A lifecycle
 without changing STMM's fixed MM communication-buffer checks. A separate
 local probe verifies the unchanged firmware accepts its advertised buffer and
 rejects an outside pointer even after a successful share.
-Root of Trust requests receive explicit nonzero errors; no attestation or
-security/logging service is reported as successful.
+Root of Trust requests receive explicit nonzero errors by default. The
+installed-Linux and Secure Boot runs explicitly use `--rot-functional`,
+whose success replies **authenticate nothing**. No preceding firmware
+authentication, attestation or production root of trust is established.
 
 Only the optional compatibility NIC is connected through the minimal PCIe
 bridge; most roots remain empty. USB PHY register readback and clock
@@ -129,3 +142,256 @@ UEFI boot, not execution of every component in the SoC image.
 The older `run_spark.py` diagnostic deliberately omits the monitor/MM package.
 It remains useful for SEC/DXE entry checks and explicit failure scenarios;
 its continuations are not the full-boot runner.
+
+## Installed-disk stall diagnosis and correction, 2026-11-11
+
+The vendor installer completes against the profile and the produced disk boots under the vendor UEFI to
+its own kernel (`7.0.0-1019-nvidia`), through `firmware -> EFI/BOOT/BOOTAA64.EFI -> shim -> GRUB -> /boot`
+without an NVRAM entry. Before the monitor fix, output stopped after `scmi_core`.
+
+The earlier claim that the CPU was waiting for an interrupt was wrong. Zero new translated-block samples
+in ten minutes rules out a retiring loop, but not recursive faults fetching an unmapped vector. The
+decisive `--trace-exceptions` run (`20261111T154523.547381Z`) records the **first** fault:
+
+```text
+STMM resume PC=0x93a7e168
+EL1 -> EL1 instruction abort: ESR=0x8600000f, FAR=ELR=0x93a7e168
+vector PC=0x200; subsequent ESR=0x86000005, FAR=ELR=0x200
+```
+
+The first fault is execute permission at level 3; the later faults are level-1 translation faults at the
+zero-based vector. The register file from `20261111T155336.769648Z-context-before` explicitly says
+**`S EL1h`**: this is secure STMM, not the non-secure Linux kernel. Its vector base was already zero
+at the first secure save, before UEFI ran. The monitor faithfully restores that zero; it did not zero
+Linux's vector base.
+
+The same capture measures both `TCR2_EL1` and `TCR2_EL2` initially `0`, then `2` (`PIE=1`) in the
+NS request after `scmi_core`, and still `2` after restoring STMM. These unbanked controls were omitted
+from the world context. Linux's permission-indirection state therefore reinterpreted secure legacy
+page descriptors and denied the correct return address execute permission.
+
+The monitor now preserves optional TCR2, stage-1 PIR/PIRE0 and HCRX state per world while leaving SCR
+feature enables unchanged. A synthetic executable-mapping regression fails with the old monitor and
+passes with the fix; NS permission state survives two round trips. Full measurements, hashes and run
+identifiers are recorded in [the Linux boot history](linux-under-the-profile.md).
+
+The firmware ROT retry loop, console model and `update_event_printk` infinite-scan theory remain ruled
+out. Neither an unchanged sample count nor an FF-A function ID by itself identifies the security state.
+
+With the fix, `20261111T160507.692000Z-context-fixed` reaches `/init` at guest time 18.422 s,
+mounts `nvme0n1p2` at 38.672 s, starts systemd 255.4 at 45.105 s and prints
+`Welcome to Ubuntu 24.04.4 LTS!`. The capture confirms secure TCR2/PIR/PIRE0/HCRX values restored to
+zero and NS PIE/permission values preserved, rather than disabling Linux's features. This is the
+installed kernel and root, not the recovery initramfs.
+
+That bounded capture did not reach a login prompt or desktop: it ended while AppArmor profiles
+were loading and a vendor software-removal startup job was still in progress. Neither was diagnosed
+as a stall. The later serial-login test below supersedes the login limitation, not the desktop claim.
+GCS and other optional context groups, the recovery boot after this change, GPU and physical-device
+support remain unverified or outside scope.
+
+## The installed disk's boot stanza
+
+`EFI/ubuntu/grub.cfg` on the installed disk was replaced with an explicit stanza because the
+installer's original stops printing at the bootconsole line; the original remains beside it as
+`grub.cfg.orig`. The isolated login test retains the installed kernel, initrd and root UUID.
+The 2026-11-11 run used `systemd.unit=getty.target`; the follow-on default-target test
+removes that override and uses only
+`console=ttyS0,115200 earlycon=uart,mmio32,0x16a00000 nokaslr`.
+The enabled serial getty and test root-password provisioning are recorded in
+[the installed-root test setup](linux-under-the-profile.md#installed-root-serial-login-and-packet-fan-test-setup-2026-11-11);
+these are edits to a throwaway, regenerable installer output, not changes to vendor firmware.
+
+## Installed serial login and packet fan control, 2026-11-11
+
+Run **`20261111T175332.261188Z`** retains one `serial.log` with the real
+`localhost login:` prompt, authenticated root shell, enabled/active
+`serial-getty@ttyS0`, and kernel `7.0.0-1019-nvidia` with **4096-byte pages**.
+`--ffa-ec` opts into FF-A discovery for packet UUID
+`78b04d80-d21d-4986-8acb-467b60247ac5`, endpoint `0x8003`,
+properties `0x0109`, RX/TX ownership and DIRECT_REQ2 packet handling.
+The monitor's implemented SMCCC version is exactly 1.2 (`0x00010002`);
+PSCI advertises that call independently of the EC option.
+
+Monitor packet traces record the guest's floor write `0x1194` and the
+automatic restore to `0xffff`. These are computed emulated results, not
+physical tachometer/thermal measurements.
+
+The full command, disk test hooks and limitations are in
+[the Linux evidence](linux-under-the-profile.md#one-installed-guest-run-reaches-login-and-controls-the-modelled-fan).
+That historical run did not establish full multi-user startup, desktop or
+physical cooling. Follow-on evidence is recorded below.
+
+## Default-target and ACPI follow-on
+
+Run **`20261111T191435.858956Z`** retains the 2.158.15 kernel command line
+without `systemd.unit=`, the actual `localhost login:` prompt, and guest
+journal line `Reached target multi-user.target - Multi-User System.`.
+`MULTI_USER_ACTIVE=active` and `DEFAULT_TARGET=graphical.target` corroborate
+the completed natural default transaction. Some hardware/network-dependent
+services fail; reaching the target is not a healthy desktop or GPU claim.
+
+Under 2.158.15 the kernel's own `acpi-fan` driver binds both `PNP0C0B`
+platform devices, and `thermal_cooling` resolves to two type-`Fan` cooling
+devices. See [the exact evidence and limits](linux-under-the-profile.md#default-target-boot-and-native-acpi-selection).
+
+## Platform Secure Boot follow-on
+
+Run **`20261112T022953.618760Z`** uses a separately provisioned lab PK/KEK
+and **only Microsoft UEFI CA 2011 in db**. Its `BootCurrent: 0000`
+identifies `EFI/BOOT/BOOTAA64.EFI`; unchanged shim verifies Canonical-signed
+GRUB and kernel. Guest `mokutil` reports `SecureBoot enabled`, efivarfs
+reports SecureBoot 1 / SetupMode 0, and the default transaction reaches
+both multi-user and graphical targets plus authenticated serial login.
+
+Separate one-byte-corruption controls demonstrate actual rejection by
+firmware, shim and GRUB/shim-lock, rather than relying only on an enable
+flag or on host signature inspection.
+See [the boundary-specific refusal table](linux-under-the-profile.md#independent-negative-controls-for-all-three-image-verification-steps)
+and [the complete positive evidence](linux-under-the-profile.md#cold-boot-chain-and-kernel-trust).
+
+Both modes are one flag apart, and either is reproducible with the recorded arguments:
+
+```sh
+# Secure Boot off (the earlier policy)
+python3 tools/boot_spark.py --firmware-version 2.155.11 --memory 2G --timeout 3600 \
+    --state-file firmware/state/spark-secureboot-off.bin \
+    --nvme-image firmware/state/install-target-40g.img \
+    --rot-functional --no-setup-escape --ffa-ec
+
+# Secure Boot on (PK/KEK/db enrolled)
+python3 tools/boot_spark.py --firmware-version 2.155.11 --memory 2G --timeout 3600 \
+    --state-file firmware/state/spark-secureboot-on.bin \
+    --nvme-image firmware/state/install-target-40g.img \
+    --rot-functional --no-setup-escape --ffa-ec
+```
+
+The two images are separate state files, not a toggle inside one: `--state-file` selects which
+variable store boots, so the Secure-Boot-on run cannot silently fall back to the off policy.
+`firmware/state/spark-secureboot-off.bin` preserves the earlier policy;
+`spark-secureboot-on.bin` retains the enrolled policy. Both are local-only.
+This is not manufacturer provisioning: PK/KEK are disposable lab keys,
+the actual unit's key inventory was not copied, dbx is absent, and the
+synthetic loader/functional ROT does not authenticate the vendor firmware.
+
+
+## Remaining platform limits and evidence boundaries
+
+These are separate from the permission-indirection correction and from a
+successful installed-Linux boot.
+
+### ROT request capture is not a reconstructed security service
+
+The captured `0x29` request is `0x00000129 0x90000000`; `0x12` is
+`0x00000312 0x90000000 0x00000001 0xfcc40d97`, followed by the same request
+with `0xb6db6764` as its last word. The leading count interpretation and a
+checksum/digest interpretation of the varying word are **[INFERENCE]**.
+`--rot-functional` supplies status 0 and no payload. The only established
+reply property is **"status 0 is accepted"** on the observed boot path;
+the complete reply shape and security semantics remain **unverified**.
+Paired hardware ROT request/reply and pointed-memory captures, plus the
+caller's post-reply loads/branches (or an authoritative specification),
+would settle this. See [the raw shape and closure requirements](runtime-variables.md#the-request-shape-as-far-as-the-captures-support-it).
+
+Retained `20261111T093421.135412Z/qemu.log` lines 40–41 and 106–117
+contain the transport capture (host diagnostics, **not UART lines**);
+additional `0x12` calls use third word `2` and last word `0x64a0ea5f`.
+The short examples above are not an exhaustive per-boot call count.
+
+### Optional context is not covered by the permission-state regression
+
+The fix and executable regression cover TCR2, stage-1 PIR/PIRE0 and HCRX,
+with normal-world permission state preserved over secure round trips.
+They do **not** establish preservation of guarded-control-stack state
+(`GCSCR`, `GCSCRE0`, `GCSPR`), fine-grained trap registers, `SCTLR2`, or
+every optional timer/debug/PMU context group. Those groups have not been
+independently exercised or exhaustively audited: **unverified**, not
+silently supported. Enabling accesses in `SCR_EL3` is not context
+preservation. SVE, SME and pointer authentication are explicitly disabled
+by the runner, not implemented by this monitor. This is a single-CPU,
+non-concurrent world-switch model, not production isolation.
+
+### Three declared SMMUs, not three modelled SMMUs
+
+The firmware's IORT declares three 128 KiB SMMU windows, `0x13800000`,
+`0x13000000` and `0x14900000`, with no PCI root-complex node or stream-ID
+mappings. The profile backs the windows with an inert, read-zero/write-drop
+region; the guest discovers the declarations but no functional SMMU.
+
+The earlier phrase "three attempts, each a build and a start" overstated
+the retained evidence. There are **two recorded QEMU refusals and a
+source-level structural argument**, not three independently retained
+failure diagnostics:
+
+1. No primary PCI bus: `SMMU is not attached to any PCI bus!`.
+2. Attach all three to the same primary bus: the second refuses with
+   `An iommu is already attached to this bus`.
+3. Source review, **not a third measured failure**:
+   `hw/arm/smmu-common.c:smmu_base_realize()` requires PCI attachment and
+   `hw/pci/pci.c:pci_setup_iommu_per_bus()` rejects a second per-bus IOMMU.
+   These diagnostics are confirmed in the local QEMU source; their original startup logs are not retained
+   with a named run here. Any distinct third startup diagnostic is
+   **unverified**.
+
+Thus this QEMU `arm-smmuv3` cannot represent the three instances as the
+firmware declares them **without PCI attachment**. Inventing buses or
+stream mappings would change the platform contract. A standalone SMMU
+model, or measured device/stream mappings and a corresponding platform
+description, would be needed to remove the limitation. Guest-side probe
+failures are distinct evidence from these host startup refusals.
+
+The separate guest measurement in retained
+`20261112T060832.086295Z/serial.log` reports all three probe failures
+(ANSI stripped):
+
+```text
+[    2.535931] arm-smmu-v3 arm-smmu-v3.0.auto: no translation support!
+[    2.541182] arm-smmu-v3 arm-smmu-v3.1.auto: no translation support!
+[    2.542548] arm-smmu-v3 arm-smmu-v3.2.auto: no translation support!
+```
+
+### eSPI is not reached
+
+The runner boots only UEFI and STMM; no exercised boot path reaches the
+eSPI service or the eSPI controller transaction path.
+The FF-A EC fan model is a service-level model, **not eSPI bus emulation**.
+Wire transactions, completion/error forms and physical eSPI behaviour
+remain **unverified**. Booting the extracted ESPI service and capturing
+its transactions would be required before implementing that contract.
+
+### Secure Boot provenance is a separate boundary
+
+The PK and KEK are our disposable lab keys. `db` contains **only
+Microsoft Corporation UEFI CA 2011**, not the Canonical CA. Canonical trust comes from the
+unchanged shim's embedded vendor certificate. `dbx` is absent. The
+synthetic loader and functional ROT **do not authenticate the vendor
+firmware**. These are genuine UEFI/shim/kernel checks after entry into
+unverified-by-the-model firmware, not a manufacturer's provisioned boot
+ROM/BL31 root of trust. Certificate hashes, guest readback and the
+`DBX_PRESENT=False` capture are linked from the
+[Secure Boot provenance boundary](linux-under-the-profile.md#secure-boot-provenance-boundary).
+
+## Runtime variables and a selected non-fallback boot entry
+
+The earlier recovery-initramfs `Operation not supported` and installer
+`efibootmgr` failure are pre-context-fix history. Fresh retained creation
+run **`20261112T060832.086295Z`** explicitly unmounts/remounts efivarfs
+and records `EFIVARFS_MOUNT_RC=0`,
+`efivarfs efivarfs /sys/firmware/efi/efivars`, and
+`EFIBOOTMGR_CREATE_RC=0`. The created entry is
+`Boot0006* Spark runtime persistence`, loader
+`\EFI\ubuntu\shimaa64.efi`.
+
+After that harness/QEMU exited, a **new process** cold-boots retained
+run **`20261112T063956.565964Z`**. Its UART reaches
+`localhost login: root`; `efibootmgr -v` reports `BootCurrent: 0006`
+and the same named entry and non-fallback loader. Creation-after and
+cold-before NOR SHA-256 are identical. This is persisted and selected
+NVRAM, not just a successful write before a warm reset. The
+`EFI/BOOT` fallback remains an available path, not the only bootable one.
+
+The existing real-STMM relay plus permission-context fix already supply
+the service; no second variable database or forged EFI response was added.
+The original isolated-disk root hash was restored after the authenticated
+sessions, and both accepted Secure Boot stores were left unchanged.
+See [the complete runtime evidence, request frame and custody](runtime-variables.md#fresh-runtime-create-and-cold-boot-persistence).
